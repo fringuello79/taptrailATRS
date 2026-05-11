@@ -15,7 +15,7 @@
 //   Tip: questa costante è importata SOLO da src/systems/Leaderboard.js.
 //   Quindi nessun altro modulo "vede" l'URL e nessun altro fa rete.
 
-export const LEADERBOARD_URL = '';
+export const LEADERBOARD_URL = 'https://script.google.com/macros/s/AKfycbwwKriV26yOnz6Ll_sGRK7tnr-h_xf6fDIPBNfFzJuQBxbTbr75fSRCKEsoY3Qg9eLvBA/exec';
 
 // Limite massimo entries che il client chiede al backend per ogni track/championship.
 // Il sheet può tenerne migliaia, qui vediamo solo le top.
