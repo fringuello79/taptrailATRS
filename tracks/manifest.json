@@ -1,0 +1,227 @@
+{
+  "series": {
+    "id": "atrs-2026",
+    "name": "Abruzzo Trail Run Series",
+    "short_name": "ATRS",
+    "description": "Sei eventi di trail running tra le montagne d'Abruzzo. Calendario ufficiale 2026.",
+    "season_year": 2026
+  },
+  "events": [
+    {
+      "id": "voltigno",
+      "name": "Skyrace del Voltigno",
+      "location": "Villaceliera (PE)",
+      "date": "03/05/2026",
+      "logo": "assets/logos/voltigno.png",
+      "order": 1,
+      "distances": [
+        {
+          "id": "voltigno-19k",
+          "name": "Skyrun",
+          "label": "19K",
+          "file": "voltigno-19k.json",
+          "distance_km": 19,
+          "elevation_gain_m": 1230,
+          "itra": 1,
+          "utmb_category": "20K",
+          "score_bonus": 20,
+          "placeholder": false
+        },
+        {
+          "id": "voltigno-34k",
+          "name": "Skymarathon",
+          "label": "34K",
+          "file": "voltigno-34k.json",
+          "distance_km": 34,
+          "elevation_gain_m": 2150,
+          "itra": 2,
+          "utmb_category": "50K",
+          "score_bonus": 40,
+          "placeholder": false
+        }
+      ]
+    },
+    {
+      "id": "alba-dei-marsi",
+      "name": "L'Alba dei Marsi",
+      "location": "Antrosano (AQ)",
+      "date": "07/06/2026",
+      "logo": "assets/logos/alba_marsi_event.png",
+      "order": 2,
+      "distances": [
+        {
+          "id": "alba-dei-marsi-12k",
+          "name": "Trail Corto",
+          "label": "12K",
+          "file": "alba-dei-marsi-12k.json",
+          "distance_km": 12,
+          "elevation_gain_m": 420,
+          "itra": 0,
+          "utmb_category": null,
+          "score_bonus": 0,
+          "placeholder": false
+        },
+        {
+          "id": "alba-dei-marsi-21k",
+          "name": "Trail Lungo",
+          "label": "21K",
+          "file": "alba-dei-marsi-21k.json",
+          "distance_km": 21,
+          "elevation_gain_m": 850,
+          "itra": 1,
+          "utmb_category": "20K",
+          "score_bonus": 20,
+          "placeholder": false
+        }
+      ]
+    },
+    {
+      "id": "mammut",
+      "name": "Skyrace del Mammut",
+      "location": "Cese di Preturo (AQ)",
+      "date": "21/06/2026",
+      "logo": "assets/logos/mammut.png",
+      "order": 3,
+      "distances": [
+        {
+          "id": "mammut-12k",
+          "name": "Trail del Mammut",
+          "label": "12.4K",
+          "file": "mammut-12k.json",
+          "distance_km": 12.4,
+          "elevation_gain_m": 700,
+          "itra": 0,
+          "utmb_category": null,
+          "score_bonus": 0,
+          "placeholder": false
+        },
+        {
+          "id": "mammut-21k",
+          "name": "Skyrace del Mammut",
+          "label": "21K",
+          "file": "mammut-21k.json",
+          "distance_km": 21,
+          "elevation_gain_m": 1500,
+          "itra": 1,
+          "utmb_category": "20K",
+          "score_bonus": 20,
+          "placeholder": false
+        }
+      ]
+    },
+    {
+      "id": "xterra",
+      "name": "Xterra Abruzzo Trail Run",
+      "location": "Ovindoli (AQ)",
+      "date": "18-19/07/2026",
+      "logo": "assets/logos/xterra.png",
+      "order": 4,
+      "distances": [
+        {
+          "id": "xterra-10k",
+          "name": "Urban Trail",
+          "label": "10K",
+          "file": "xterra-10k.json",
+          "distance_km": 10,
+          "elevation_gain_m": 280,
+          "itra": 0,
+          "utmb_category": null,
+          "score_bonus": 0,
+          "placeholder": false
+        },
+        {
+          "id": "xterra-25k",
+          "name": "Half Marathon",
+          "label": "25K",
+          "file": "xterra-25k.json",
+          "distance_km": 25,
+          "elevation_gain_m": 1600,
+          "itra": 1,
+          "utmb_category": "20K",
+          "score_bonus": 20,
+          "placeholder": false
+        },
+        {
+          "id": "xterra-41k",
+          "name": "Marathon",
+          "label": "41K",
+          "file": "xterra-41k.json",
+          "distance_km": 41,
+          "elevation_gain_m": 2800,
+          "itra": 3,
+          "utmb_category": "50K",
+          "score_bonus": 40,
+          "placeholder": false
+        }
+      ]
+    },
+    {
+      "id": "gran-sasso",
+      "name": "Gran Sasso Trail",
+      "location": "Pietracamela (TE)",
+      "date": "30/08/2026",
+      "logo": "assets/logos/gran_sasso.png",
+      "order": 5,
+      "distances": [
+        {
+          "id": "gran-sasso-11k",
+          "name": "Pietracamela Trail",
+          "label": "11K",
+          "file": "gran-sasso-11k.json",
+          "distance_km": 11,
+          "elevation_gain_m": 500,
+          "itra": 0,
+          "utmb_category": null,
+          "score_bonus": 0,
+          "placeholder": false
+        },
+        {
+          "id": "gran-sasso-21k",
+          "name": "Madonnina Trail",
+          "label": "21K",
+          "file": "gran-sasso-21k.json",
+          "distance_km": 21,
+          "elevation_gain_m": 1200,
+          "itra": 1,
+          "utmb_category": "20K",
+          "score_bonus": 20,
+          "placeholder": false
+        },
+        {
+          "id": "gran-sasso-40k",
+          "name": "Trail del Gigante",
+          "label": "40K",
+          "file": "gran-sasso-40k.json",
+          "distance_km": 40,
+          "elevation_gain_m": 3000,
+          "itra": 3,
+          "utmb_category": "50K",
+          "score_bonus": 40,
+          "placeholder": false
+        }
+      ]
+    },
+    {
+      "id": "maglio",
+      "name": "Skyrace del Maglio",
+      "location": "Magliano de' Marsi (AQ)",
+      "date": "18/10/2026",
+      "logo": "assets/logos/maglio.png",
+      "order": 6,
+      "distances": [
+        {
+          "id": "maglio-30k",
+          "name": "SRM",
+          "label": "30K",
+          "file": "maglio-30k.json",
+          "distance_km": 30,
+          "elevation_gain_m": 2100,
+          "itra": 2,
+          "utmb_category": "50K",
+          "score_bonus": 40,
+          "placeholder": false
+        }
+      ]
+    }
+  ]
+}

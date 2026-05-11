@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Tap Speed Test</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", monospace; }
+  body { background: #1a1a24; color: #e8e8ec; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; }
+  h1 { color: #88ffcc; margin-bottom: 8px; font-size: 24px; }
+  .subtitle { color: #888; margin-bottom: 24px; font-size: 14px; }
+  .pad { width: 90vw; max-width: 480px; height: 200px; background: #2c3040; border: 3px solid #555; border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: manipulation; transition: all 0.05s; }
+  .pad.active { background: #44a050; border-color: #66c878; transform: scale(0.99); }
+  .pad.testing { background: #c83030; border-color: #ff5050; }
+  .pad-text { font-size: 22px; color: #fff; text-align: center; padding: 20px; pointer-events: none; }
+  .stats { width: 90vw; max-width: 480px; margin-top: 20px; background: #2c3040; border-radius: 8px; padding: 16px; }
+  .stat-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #444; font-size: 16px; }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-label { color: #aaa; }
+  .stat-value { color: #88ffcc; font-weight: bold; font-family: monospace; }
+  .stat-value.big { color: #ffd700; font-size: 22px; }
+  button { margin-top: 12px; padding: 10px 24px; font-size: 16px; background: #555; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+  button:hover { background: #666; }
+  .result-box { display: none; width: 90vw; max-width: 480px; margin-top: 16px; background: #1a3050; border: 2px solid #4a90c8; border-radius: 8px; padding: 16px; }
+  .result-box.show { display: block; }
+  .result-box h2 { color: #ffd700; font-size: 18px; margin-bottom: 8px; }
+  .result-box p { font-size: 14px; line-height: 1.5; color: #ccc; margin-bottom: 6px; }
+  .copy-data { font-family: monospace; background: #0e1424; padding: 8px; border-radius: 4px; font-size: 12px; color: #88ffcc; margin-top: 8px; word-break: break-all; }
+  .countdown { font-size: 80px; color: #ff8830; font-weight: bold; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>TAP SPEED TEST</h1>
+<div class="subtitle">Misura il tuo tetto di velocità di tap reale</div>
+
+<div class="pad" id="pad">
+  <div class="pad-text" id="padText">
+    Premi qui (o spazio sulla tastiera) per iniziare<br>
+    <small style="font-size:14px;color:#aaa;">Test di 10 secondi: tappa più velocemente che puoi</small>
+  </div>
+</div>
+
+<div class="stats">
+  <div class="stat-row"><span class="stat-label">Stato</span><span class="stat-value" id="state">In attesa</span></div>
+  <div class="stat-row"><span class="stat-label">Tap totali</span><span class="stat-value" id="totalTaps">0</span></div>
+  <div class="stat-row"><span class="stat-label">Tempo trascorso</span><span class="stat-value" id="elapsed">0.0 s</span></div>
+  <div class="stat-row"><span class="stat-label">Hz medi (totale)</span><span class="stat-value" id="avgHz">0.0</span></div>
+  <div class="stat-row"><span class="stat-label">Hz medi (ultimi 0.5 s)</span><span class="stat-value big" id="instHz">0.0</span></div>
+  <div class="stat-row"><span class="stat-label">PICCO Hz raggiunto</span><span class="stat-value big" id="peakHz">0.0</span></div>
+  <div class="stat-row"><span class="stat-label">Intervallo minimo tra tap</span><span class="stat-value" id="minInterval">— ms</span></div>
+</div>
+
+<button id="resetBtn">Reset</button>
+
+<div class="result-box" id="resultBox">
+  <h2>Risultati pronti</h2>
+  <p>Hai tappato a un picco di <strong id="rPeak">0</strong> Hz, con una media di <strong id="rAvg">0</strong> Hz su 10 secondi.</p>
+  <p id="rInterp"></p>
+  <p style="margin-top:8px;color:#888">Copia questi dati e incollameli nella chat:</p>
+  <div class="copy-data" id="copyData"></div>
+</div>
+
+<script>
+const pad = document.getElementById('pad');
+const padText = document.getElementById('padText');
+const stateEl = document.getElementById('state');
+const totalTapsEl = document.getElementById('totalTaps');
+const elapsedEl = document.getElementById('elapsed');
+const avgHzEl = document.getElementById('avgHz');
+const instHzEl = document.getElementById('instHz');
+const peakHzEl = document.getElementById('peakHz');
+const minIntervalEl = document.getElementById('minInterval');
+const resetBtn = document.getElementById('resetBtn');
+const resultBox = document.getElementById('resultBox');
+
+const TEST_DURATION = 10; // secondi
+
+let testing = false;
+let testStarted = 0;
+let tapTimes = []; // timestamp di ogni tap (in secondi dal start)
+let intervals = []; // intervalli tra tap consecutivi (ms)
+let peakHz = 0;
+let minInterval = Infinity;
+
+function reset() {
+  testing = false;
+  tapTimes = [];
+  intervals = [];
+  peakHz = 0;
+  minInterval = Infinity;
+  pad.classList.remove('active', 'testing');
+  padText.innerHTML = 'Premi qui (o spazio sulla tastiera) per iniziare<br><small style="font-size:14px;color:#aaa;">Test di 10 secondi: tappa più velocemente che puoi</small>';
+  stateEl.textContent = 'In attesa';
+  totalTapsEl.textContent = '0';
+  elapsedEl.textContent = '0.0 s';
+  avgHzEl.textContent = '0.0';
+  instHzEl.textContent = '0.0';
+  peakHzEl.textContent = '0.0';
+  minIntervalEl.textContent = '— ms';
+  resultBox.classList.remove('show');
+}
+
+function startTest() {
+  reset();
+  testing = true;
+  testStarted = performance.now() / 1000;
+  pad.classList.add('testing');
+  stateEl.textContent = 'TESTING — TAPPA!';
+  padText.innerHTML = 'TAPPA!<br>(spazio o click)';
+  requestAnimationFrame(updateLoop);
+}
+
+function endTest() {
+  testing = false;
+  pad.classList.remove('testing', 'active');
+  stateEl.textContent = 'TEST CONCLUSO';
+  padText.innerHTML = 'Test completato!<br><small style="color:#aaa">Premi Reset per ripetere</small>';
+  showResults();
+}
+
+function showResults() {
+  const total = tapTimes.length;
+  const avgHz = total / TEST_DURATION;
+  document.getElementById('rPeak').textContent = peakHz.toFixed(1);
+  document.getElementById('rAvg').textContent = avgHz.toFixed(1);
+  let interp = '';
+  if (peakHz < 5) interp = 'Tap più "controllato" — il gioco va calibrato per dare il massimo ai 5 Hz.';
+  else if (peakHz < 8) interp = 'Tap nella media (5-8 Hz). Il gioco dovrebbe avere il suo top a circa il tuo picco.';
+  else if (peakHz < 12) interp = 'Tap veloce (8-12 Hz). Il gioco attuale sta sotto-rappresentandoti: il cap è 6 Hz.';
+  else interp = 'Tap super-veloce (12+ Hz). Sei un "drum roller" — il sistema deve essere molto più aperto.';
+  document.getElementById('rInterp').textContent = interp;
+  const data = `TAP TEST RESULT: peak=${peakHz.toFixed(1)} Hz, avg=${avgHz.toFixed(1)} Hz, total=${total} taps in ${TEST_DURATION}s, minInterval=${minInterval.toFixed(0)}ms`;
+  document.getElementById('copyData').textContent = data;
+  resultBox.classList.add('show');
+}
+
+function onTap() {
+  if (!testing) {
+    if (tapTimes.length === 0 && pad.textContent.includes('Premi qui')) {
+      startTest();
+      // Il primo "premi qui per iniziare" non conta come tap del test
+      return;
+    }
+    return;
+  }
+
+  const now = performance.now() / 1000;
+  const elapsed = now - testStarted;
+  if (elapsed > TEST_DURATION) {
+    endTest();
+    return;
+  }
+
+  // intervallo dal tap precedente
+  if (tapTimes.length > 0) {
+    const prevT = tapTimes[tapTimes.length - 1];
+    const intervalMs = (now - testStarted - prevT) * 1000;
+    intervals.push(intervalMs);
+    if (intervalMs < minInterval && intervalMs > 5) {
+      minInterval = intervalMs;
+    }
+  }
+  tapTimes.push(elapsed);
+
+  pad.classList.add('active');
+  setTimeout(() => pad.classList.remove('active'), 30);
+}
+
+function updateLoop() {
+  if (!testing) return;
+  const now = performance.now() / 1000;
+  const elapsed = now - testStarted;
+  if (elapsed > TEST_DURATION) {
+    endTest();
+    return;
+  }
+  elapsedEl.textContent = elapsed.toFixed(1) + ' s';
+  totalTapsEl.textContent = tapTimes.length;
+  // Hz medi
+  if (elapsed > 0) {
+    const avgHz = tapTimes.length / elapsed;
+    avgHzEl.textContent = avgHz.toFixed(2);
+  }
+  // Hz istantanei (ultimi 0.5s)
+  const recentTaps = tapTimes.filter(t => elapsed - t < 0.5).length;
+  const instHz = recentTaps / 0.5;
+  instHzEl.textContent = instHz.toFixed(1);
+  if (instHz > peakHz) peakHz = instHz;
+  peakHzEl.textContent = peakHz.toFixed(1);
+  if (minInterval !== Infinity) {
+    minIntervalEl.textContent = minInterval.toFixed(0) + ' ms';
+  }
+  requestAnimationFrame(updateLoop);
+}
+
+// Eventi
+pad.addEventListener('mousedown', (e) => { e.preventDefault(); onTap(); });
+pad.addEventListener('touchstart', (e) => { e.preventDefault(); onTap(); }, { passive: false });
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && !e.repeat) {
+    e.preventDefault();
+    onTap();
+  }
+});
+resetBtn.addEventListener('click', reset);
+</script>
+</body>
+</html>
