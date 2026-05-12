@@ -37,10 +37,12 @@ export class ChampionshipFinalScene {
         this.game.changeState(GameState.CHAMPIONSHIP_HUB);
         return;
       }
-      // Invia online: ora fa davvero il POST
+      // Vedi classifica campionato: naviga a LeaderboardScene (la vista CAMPIONATO
+      // mostra la classifica generale, già aggiornata con tutte le gare giocate
+      // durante il campionato che sono state inviate automaticamente).
       if (c.x > W/2 - 100 && c.x < W/2 - 4 && c.y > H - 20 && c.y < H - 4) {
-        if (this.submitStatus === 'sending') return; // anti-doppio-click
-        this._submitOnline();
+        this.game.audio.beep(660, 0.10);
+        this.game.changeState(GameState.LEADERBOARD);
         return;
       }
       // Nuovo campionato
@@ -207,25 +209,10 @@ export class ChampionshipFinalScene {
 
     // pulsanti in basso (centrati)
     const by = H - 18;
-    // Bottone INVIA ONLINE - colore in base allo stato submit
-    let sendBg = '#1F4FA8';      // idle (blu)
-    let sendLabel = 'INVIA ONLINE';
-    if (this.submitStatus === 'sending') {
-      sendBg = '#806020';         // arancione: in corso
-      sendLabel = 'INVIO...';
-    } else if (this.submitStatus === 'ok') {
-      sendBg = '#2E8B3A';         // verde: ok
-      sendLabel = 'INVIATO';
-    } else if (this.submitStatus === 'queued') {
-      sendBg = '#806020';         // arancione: in coda
-      sendLabel = 'IN CODA';
-    } else if (this.submitStatus === 'error' || this.submitStatus === 'unconfigured') {
-      sendBg = '#A03020';         // rosso: errore o non configurato
-      sendLabel = this.submitStatus === 'unconfigured' ? 'NO BACKEND' : 'ERRORE';
-    }
-    ctx.fillStyle = sendBg;
+    // Bottone VEDI CLASSIFICA (porta a LeaderboardScene tab CAMPIONATO)
+    ctx.fillStyle = '#1F4FA8';
     ctx.fillRect(W/2 - 100, by, 96, 14);
-    drawTextCentered(ctx, sendLabel, W/2 - 52, by + 4, '#FFFFFF', 1);
+    drawTextCentered(ctx, 'CLASSIFICA', W/2 - 52, by + 4, '#FFFFFF', 1);
 
     ctx.fillStyle = this.confirmReset ? '#A03020' : '#2E8B3A';
     ctx.fillRect(W/2 + 4, by, 96, 14);
