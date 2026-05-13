@@ -1,25 +1,25 @@
 // src/scenes/LeaderboardScene.js
-// Vista classifiche: due tab.
-//   LOCALE  → record salvati su localStorage, divisi per track (tutte le distanze).
-//   ONLINE  → classifica Campionato ATRS via backend (Google Apps Script).
-//             Solo se LEADERBOARD_URL è configurato; altrimenti messaggio
-//             "BACKEND NON CONFIGURATO. VEDI docs/LEADERBOARD_SETUP.md".
-//
-// Estensione futura: la tab ONLINE può ciclare anche i board per singola gara
-// (board=trackId). Per ora mostra solo il Campionato, che è il più interessante
-// e si carica in 1 chiamata. Le entries delle singole gare vengono scritte
-// comunque sul Sheet (auto-submit da ResultsScene), pronte per il futuro.
+// Classifiche. 3 viste principali:
+//   LOCALE      → tuoi record personali (PB) — usati anche per il ghost
+//   GARE        → hub con le 13 gare e il leader corrente di ognuna
+//                  cliccando su una gara → sotto-pagina con classifica dettagliata
+//   CAMPIONATO  → classifica generale ATRS (totale punti + bonus 5/6, 6/6)
 
 import { drawText, drawTextCentered, drawTextShadow } from '../ui/PixelFont.js';
-import { drawLogo } from '../ui/Branding.js';
 import { GameState } from '../core/Game.js';
 import { leaderboard } from '../systems/Leaderboard.js';
+
+const VIEWS = ['races', 'championship'];
+const VIEW_LABELS = {
+  races: 'GARE',
+  championship: 'CAMPIONATO',
+};
 
 export class LeaderboardScene {
   constructor(game) {
     this.game = game;
-    this.records = game.storage.loadRecords();
-    // Estraggo TUTTE le distanze da events
+
+    // Lista delle gare nell'ordine del manifest (eventi + distanze)
     this.tracks = [];
     const events = game.manifest.events || [];
     for (const ev of events) {
@@ -27,96 +27,203 @@ export class LeaderboardScene {
         this.tracks.push({
           id: dist.id,
           name: `${ev.name} ${dist.label}`,
-          eventLogo: ev.logo,
-          unlocked: !dist.placeholder,  // disponibile solo se ha GPX vero
+          shortName: ev.name,
+          distLabel: dist.label,
+          unlocked: !dist.placeholder,
         });
       }
     }
 
-    // Tab attiva: 'local' | 'online'. Default = local (offline-friendly).
-    this.tab = 'local';
+    this.view = 'races';        // vista corrente: 'races' | 'championship'
+    this.detailTrackId = null;  // se non null → siamo nel dettaglio di una gara
 
-    // Stato fetch online
-    this.onlineEntries = null;       // null = non ancora caricato; [] = vuoto; [...] = popolato
-    this.onlineLoading = false;
-    this.onlineError = null;
-    this.onlineBoard = 'championship';
+    // Cache delle classifiche online (per chiave)
+    this.onlineData = {};       // chiave → array
+    this.onlineLoading = {};    // chiave → bool
+    this.onlineError = {};      // chiave → string|null
+
+    // Records locali — ricaricati a enter() per essere sempre freschi
+    this.records = game.storage.loadRecords();
+
+    // Scroll della lista (per liste lunghe)
+    this.scrollOffset = 0;
 
     this._handleKey = (e) => {
-      if (e.code === 'Escape') this.game.changeState(GameState.MENU);
-      else if (e.code === 'Enter') this.game.changeState(GameState.MENU);
-      else if (e.code === 'Tab') {
+      if (e.code === 'Escape') {
+        // Se siamo in dettaglio gara, torna alla hub. Altrimenti vai al menu.
+        if (this.detailTrackId) {
+          this.detailTrackId = null;
+        } else {
+          this.game.changeState(GameState.MENU);
+        }
+      } else if (e.code === 'Enter') {
+        this.game.changeState(GameState.MENU);
+      } else if (e.code === 'Tab') {
         e.preventDefault();
-        this._switchTab(this.tab === 'local' ? 'online' : 'local');
+        // Tab cicla le 3 viste, ma esce dal dettaglio
+        this.detailTrackId = null;
+        this._cycleView(e.shiftKey ? -1 : 1);
       }
     };
     window.addEventListener('keydown', this._handleKey);
+  }
+
+  enter() {
+    // Ricarico i record locali ogni volta (così aggiornamenti recenti
+    // dopo una gara appena finita sono visibili)
+    this.records = this.game.storage.loadRecords();
   }
 
   exit() {
     window.removeEventListener('keydown', this._handleKey);
   }
 
-  /** Cambia tab. Se vado su online e non ho ancora caricato, lancio fetch. */
-  _switchTab(newTab) {
-    if (newTab === this.tab) return;
-    this.tab = newTab;
-    if (newTab === 'online' && this.onlineEntries === null && !this.onlineLoading) {
-      this._loadOnline();
+  _cycleView(dir) {
+    const i = VIEWS.indexOf(this.view);
+    this._setView(VIEWS[(i + dir + VIEWS.length) % VIEWS.length]);
+  }
+
+  _setView(v) {
+    if (v === this.view) return;
+    this.view = v;
+    this.detailTrackId = null;
+    this.scrollOffset = 0;
+    if (v === 'championship') {
+      this._ensureChampionshipLoaded();
+    } else if (v === 'races') {
+      this._ensureRacesHubLoaded();
     }
   }
 
-  _loadOnline() {
-    if (!leaderboard.isAvailable()) {
-      this.onlineEntries = [];
-      this.onlineError = 'BACKEND NON CONFIGURATO';
-      return;
-    }
-    this.onlineLoading = true;
-    this.onlineError = null;
-    leaderboard.fetchTop(this.onlineBoard, 10).then(entries => {
-      this.onlineEntries = entries;
-      this.onlineLoading = false;
-      if (entries.length === 0 && leaderboard.lastError) {
-        this.onlineError = leaderboard.lastError;
-      }
+  _ensureChampionshipLoaded() {
+    const key = 'championship';
+    if (this.onlineData[key] !== undefined || this.onlineLoading[key]) return;
+    this.onlineLoading[key] = true;
+    leaderboard.fetchChampionship('', 30).then(entries => {
+      this.onlineData[key] = entries;
+      this.onlineLoading[key] = false;
     }).catch(err => {
-      this.onlineLoading = false;
-      this.onlineEntries = [];
-      this.onlineError = err.message || String(err);
+      this.onlineLoading[key] = false;
+      this.onlineData[key] = [];
+      this.onlineError[key] = err.message || String(err);
     });
+  }
+
+  /** Per la hub gare: per ogni track preload del leader (top 1).
+   *  In realtà chiediamo top 5 al server così la cache è già pronta se
+   *  l'utente apre il dettaglio. */
+  _ensureRacesHubLoaded() {
+    for (const t of this.tracks) {
+      if (!t.unlocked) continue;
+      const key = 'top|' + t.id;
+      if (this.onlineData[key] !== undefined || this.onlineLoading[key]) continue;
+      this.onlineLoading[key] = true;
+      leaderboard.fetchTop(t.id, 20).then(entries => {
+        this.onlineData[key] = entries;
+        this.onlineLoading[key] = false;
+      }).catch(err => {
+        this.onlineLoading[key] = false;
+        this.onlineData[key] = [];
+        this.onlineError[key] = err.message || String(err);
+      });
+    }
+  }
+
+  _openDetail(trackId) {
+    this.detailTrackId = trackId;
+    this.scrollOffset = 0;
+    // Carica già al ensureRacesHub, ma forzo se assente
+    const key = 'top|' + trackId;
+    if (this.onlineData[key] === undefined && !this.onlineLoading[key]) {
+      this.onlineLoading[key] = true;
+      leaderboard.fetchTop(trackId, 30).then(entries => {
+        this.onlineData[key] = entries;
+        this.onlineLoading[key] = false;
+      }).catch(err => {
+        this.onlineLoading[key] = false;
+        this.onlineData[key] = [];
+        this.onlineError[key] = err.message || String(err);
+      });
+    }
+  }
+
+  _refreshCurrent() {
+    if (this.view === 'championship') {
+      delete this.onlineData['championship'];
+      delete this.onlineError['championship'];
+      this._ensureChampionshipLoaded();
+    } else if (this.view === 'races') {
+      if (this.detailTrackId) {
+        const key = 'top|' + this.detailTrackId;
+        delete this.onlineData[key];
+        delete this.onlineError[key];
+        this._openDetail(this.detailTrackId);
+      } else {
+        // Reset di tutte le entries della hub
+        for (const t of this.tracks) {
+          delete this.onlineData['top|' + t.id];
+          delete this.onlineError['top|' + t.id];
+        }
+        this._ensureRacesHubLoaded();
+      }
+    }
   }
 
   update(dt) {
     const W = this.game.virtualW;
+    const H = this.game.virtualH;
     for (const c of this.game.input.menuClicks) {
-      // Back
+      // Back: torna al menu (se in dettaglio, torna alla hub)
       if (c.x < 40 && c.y < 24) {
-        this.game.changeState(GameState.MENU);
+        if (this.detailTrackId) {
+          this.detailTrackId = null;
+        } else {
+          this.game.changeState(GameState.MENU);
+        }
         return;
       }
-      // Tab toggle (in alto a destra)
-      // Tab LOCALE: x in [W-180, W-94], y in [4, 22]
-      if (c.x >= W - 180 && c.x < W - 94 && c.y >= 4 && c.y < 22) {
-        this._switchTab('local');
-        this.game.audio.beep(660, 0.05);
-        return;
+      // Tab buttons in alto a destra (3 tab, 80px ognuno)
+      const tabW = 80, tabH = 18, tabY = 4, tabGap = 2;
+      const totalW = VIEWS.length * tabW + (VIEWS.length - 1) * tabGap;
+      const startX = W - totalW - 4;
+      for (let i = 0; i < VIEWS.length; i++) {
+        const tx = startX + i * (tabW + tabGap);
+        if (c.x >= tx && c.x < tx + tabW && c.y >= tabY && c.y < tabY + tabH) {
+          this._setView(VIEWS[i]);
+          this.game.audio.beep(660, 0.05);
+          return;
+        }
       }
-      // Tab ONLINE: x in [W-90, W-4], y in [4, 22]
-      if (c.x >= W - 90 && c.x < W - 4 && c.y >= 4 && c.y < 22) {
-        this._switchTab('online');
-        this.game.audio.beep(660, 0.05);
-        return;
-      }
-      // Refresh button (online tab, in basso a destra)
-      if (this.tab === 'online' && c.x >= W - 70 && c.x < W - 4
-          && c.y >= 320 && c.y < 340) {
-        this.onlineEntries = null;
-        this._loadOnline();
+      // Refresh button (in basso a destra)
+      if (c.x >= W - 70 && c.x < W - 4 && c.y >= H - 22 && c.y < H - 4) {
+        this._refreshCurrent();
         this.game.audio.beep(880, 0.05);
         return;
       }
+      // Click su gara nella hub (solo se view=races senza detail)
+      if (this.view === 'races' && !this.detailTrackId) {
+        const hit = this._hitHubRow(c.x, c.y);
+        if (hit !== null) {
+          this._openDetail(this.tracks[hit].id);
+          this.game.audio.beep(880, 0.05);
+          return;
+        }
+      }
     }
+  }
+
+  /** Hit-test sulle righe della hub. Ritorna index della track o null. */
+  _hitHubRow(x, y) {
+    const startY = 40;
+    const rowH = 18;
+    const W = this.game.virtualW;
+    if (x < 14 || x > W - 14) return null;
+    if (y < startY) return null;
+    // Trovo l'indice considerando lo scroll
+    const idx = Math.floor((y - startY) / rowH) + this.scrollOffset;
+    if (idx < 0 || idx >= this.tracks.length) return null;
+    if (!this.tracks[idx].unlocked) return null;
+    return idx;
   }
 
   render(ctx) {
@@ -128,168 +235,234 @@ export class LeaderboardScene {
     drawTextShadow(ctx, '< BACK', 8, 8, '#FFFFFF', '#000', 1);
     drawTextCentered(ctx, 'CLASSIFICHE', W / 2, 8, '#FFD700', 2);
 
-    // Tab toggle in alto a destra
-    this._drawTab(ctx, W - 180, 4, 86, 18, 'LOCALE',  this.tab === 'local');
-    this._drawTab(ctx, W -  90, 4, 86, 18, 'ONLINE',  this.tab === 'online');
-
-    if (this.tab === 'local') {
-      this._renderLocal(ctx);
-    } else {
-      this._renderOnline(ctx);
+    // Tab buttons (in alto a destra)
+    const tabW = 80, tabH = 18, tabY = 4, tabGap = 2;
+    const totalW = VIEWS.length * tabW + (VIEWS.length - 1) * tabGap;
+    const startX = W - totalW - 4;
+    for (let i = 0; i < VIEWS.length; i++) {
+      const v = VIEWS[i];
+      const tx = startX + i * (tabW + tabGap);
+      const active = (this.view === v);
+      ctx.fillStyle = active ? '#FFD700' : '#1a1a2e';
+      ctx.fillRect(tx, tabY, tabW, tabH);
+      ctx.strokeStyle = active ? '#FFFFFF' : '#444466';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(tx + 0.5, tabY + 0.5, tabW - 1, tabH - 1);
+      drawTextCentered(ctx, VIEW_LABELS[v], tx + tabW / 2, tabY + 5,
+                       active ? '#000000' : '#AAAACC', 1);
     }
 
-    drawTextCentered(ctx, '(TAB SWITCH | ESC USCITA)', W / 2, H - 10, '#888888', 1);
+    // Render body
+    if (this.view === 'championship') this._renderChampionship(ctx);
+    else if (this.view === 'races') {
+      if (this.detailTrackId)         this._renderRaceDetail(ctx);
+      else                            this._renderRacesHub(ctx);
+    }
+
+    // Refresh button (sempre, sono tutte viste online)
+    {
+      const rbX = W - 70, rbY = H - 22, rbW = 66, rbH = 18;
+      ctx.fillStyle = '#1F4FA8';
+      ctx.fillRect(rbX, rbY, rbW, rbH);
+      ctx.strokeStyle = '#88BBFF';
+      ctx.strokeRect(rbX + 0.5, rbY + 0.5, rbW - 1, rbH - 1);
+      drawTextCentered(ctx, 'REFRESH', rbX + rbW / 2, rbY + 6, '#FFFFFF', 1);
+    }
   }
 
-  _drawTab(ctx, x, y, w, h, label, active) {
-    ctx.fillStyle = active ? '#FFD700' : '#1F4FA8';
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = active ? '#FFFFFF' : '#88BBFF';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-    drawTextCentered(ctx, label, x + w / 2, y + 6,
-                     active ? '#000000' : '#FFFFFF', 1);
-  }
-
-  _renderLocal(ctx) {
+  // ============================================================
+  // VISTA CAMPIONATO
+  // ============================================================
+  _renderChampionship(ctx) {
     const W = this.game.virtualW;
-    const H = this.game.virtualH;
-    let y = 36;
+    const key = 'championship';
+    drawTextCentered(ctx, 'CLASSIFICA GENERALE ATRS 2026',
+                     W / 2, 30, '#88BBFF', 1);
+
+    const entries = this.onlineData[key];
+    const startY = 50;
+
+    if (this._renderLoadingOrError(ctx, key, startY)) return;
+    if (!entries || entries.length === 0) {
+      drawTextCentered(ctx, 'NESSUNA ENTRY ANCORA', W / 2, startY + 30, '#888888', 2);
+      drawTextCentered(ctx, 'Gioca una gara per essere il primo!',
+                       W / 2, startY + 60, '#FFFFFF', 1);
+      return;
+    }
+
+    // Header (colonne per CAMPIONATO: focus su PUNTI)
+    const cx = { rank: 14, name: 42, gender: 212, races: 236, bonus: 286, total: 360, fin: 440 };
+    drawText(ctx, '#',         cx.rank,   startY, '#FFD700', 1);
+    drawText(ctx, 'GIOCATORE', cx.name,   startY, '#FFD700', 1);
+    drawText(ctx, 'S',         cx.gender, startY, '#FFD700', 1);
+    drawText(ctx, 'GARE',      cx.races,  startY, '#FFD700', 1);
+    drawText(ctx, 'BONUS',     cx.bonus,  startY, '#FFD700', 1);
+    drawText(ctx, 'TOTALE',    cx.total,  startY, '#FFD700', 1);
+    drawText(ctx, 'FIN',       cx.fin,    startY, '#FFD700', 1);
+    ctx.fillStyle = '#FFD700';
+    ctx.fillRect(12, startY + 10, W - 24, 1);
+
+    const myName = (this.game.profile.name || 'RUNNER').toUpperCase();
+    const maxRows = Math.min(18, entries.length);
+    for (let i = 0; i < maxRows; i++) {
+      const e = entries[i];
+      const ry = startY + 16 + i * 14;
+      const isMine = (e.player || '').toUpperCase() === myName;
+      const col = isMine ? '#FFD700' : '#FFFFFF';
+      drawText(ctx, `${e.position}.`, cx.rank, ry, '#FFD700', 1);
+      drawText(ctx, (e.player || '?').toUpperCase().substring(0, 14),
+               cx.name, ry, col, 1);
+      drawText(ctx, e.gender || '-', cx.gender, ry, '#AAAACC', 1);
+      drawText(ctx, `${e.eventsCompleted}/6`, cx.races, ry, '#88FFCC', 1);
+      drawText(ctx, e.bonusPartecipazione > 0 ? `+${e.bonusPartecipazione}` : '-',
+               cx.bonus, ry, '#FF9933', 1);
+      drawText(ctx, `${e.totalPoints}`, cx.total, ry, col, 1);
+      drawText(ctx, e.finisher ? '*' : '-',
+               cx.fin + 6, ry, e.finisher ? '#FFD700' : '#666688', 1);
+    }
+  }
+
+  // ============================================================
+  // VISTA GARE (HUB)
+  // ============================================================
+  _renderRacesHub(ctx) {
+    const W = this.game.virtualW;
+    drawTextCentered(ctx, 'CLICCA SU UNA GARA PER LA CLASSIFICA',
+                     W / 2, 28, '#88BBFF', 1);
+
+    const startY = 40;
+    const rowH = 18;
+    let drawn = 0;
     for (const t of this.tracks) {
-      if (!t.unlocked) continue;
-      const logoPath = t.eventLogo;
-      if (logoPath) {
-        drawLogo(ctx, logoPath, 10, y - 6, 22);
-        drawText(ctx, t.name.toUpperCase(), 36, y, '#88BBFF', 1);
+      const ry = startY + drawn * rowH;
+      const key = 'top|' + t.id;
+      const entries = this.onlineData[key];
+      const leader = entries && entries.length > 0 ? entries[0] : null;
+
+      // Sfondo riga (alterno per leggibilità)
+      ctx.fillStyle = drawn % 2 === 0 ? '#15152a' : '#1a1a30';
+      ctx.fillRect(14, ry - 2, W - 28, rowH);
+
+      // Nome gara
+      const nameCol = t.unlocked ? '#FFFFFF' : '#555566';
+      drawText(ctx, t.name.toUpperCase().substring(0, 32),
+               20, ry + 3, nameCol, 1);
+
+      if (!t.unlocked) {
+        drawText(ctx, 'PROSSIMAMENTE', W - 110, ry + 3, '#555566', 1);
+      } else if (this.onlineLoading[key]) {
+        drawText(ctx, '...', W - 30, ry + 3, '#888888', 1);
+      } else if (leader) {
+        // Leader: nome + tempo
+        const leadName = (leader.player || '?').toUpperCase().substring(0, 12);
+        drawText(ctx, '1°', W - 200, ry + 3, '#FFD700', 1);
+        drawText(ctx, leadName, W - 180, ry + 3, '#FFD700', 1);
+        drawText(ctx, fmtTime(leader.timeSec || 0, 3),
+                 W - 80, ry + 3, '#FFFFFF', 1);
       } else {
-        drawText(ctx, t.name.toUpperCase(), 16, y, '#88BBFF', 1);
+        drawText(ctx, 'NESSUNA ENTRY', W - 110, ry + 3, '#666666', 1);
       }
-      y += 10;
-      const rec = this.records[t.id] || [];
-      if (rec.length === 0) {
-        drawText(ctx, 'NESSUN RECORD ANCORA. CORRI!', 30, y, '#666688', 1);
-        y += 12;
-      } else {
-        for (let i = 0; i < Math.min(5, rec.length); i++) {
-          const r = rec[i];
-          drawText(ctx, `${i + 1}.`, 30, y, '#FFD700', 1);
-          drawText(ctx, r.name.toUpperCase(), 46, y, '#FFFFFF', 1);
-          drawText(ctx, fmtTime(r.time), 130, y, '#CCCCCC', 1);
-          y += 8;
-        }
-      }
-      y += 6;
-      if (y > H - 30) break;
+      drawn++;
     }
   }
 
-  _renderOnline(ctx) {
+  // ============================================================
+  // VISTA GARE (DETTAGLIO singola gara)
+  // ============================================================
+  _renderRaceDetail(ctx) {
     const W = this.game.virtualW;
-    const H = this.game.virtualH;
+    const t = this.tracks.find(t => t.id === this.detailTrackId);
+    if (!t) return;
+    const key = 'top|' + t.id;
 
-    // Header del board
-    drawText(ctx, 'CAMPIONATO ATRS 2026 - TOP 10 ONLINE',
-             20, 36, '#FFD700', 1);
-    drawText(ctx, '(score finale + tempo cumulato gare completate)',
-             20, 48, '#888888', 1);
+    // Titolo gara
+    drawTextCentered(ctx, t.name.toUpperCase(), W / 2, 30, '#FFD700', 1);
+    drawTextCentered(ctx, '(ORDINATO PER TEMPO MIGLIORE)',
+                     W / 2, 40, '#888888', 1);
 
-    // Pending count
-    const pending = leaderboard.pendingCount();
-    if (pending > 0) {
-      drawText(ctx, `*** ${pending} INVII IN CODA (riprovo al refresh)`,
-               20, 60, '#FFD700', 1);
-    }
-
-    // Body
-    const startY = 78;
-    if (!leaderboard.isAvailable()) {
-      drawTextCentered(ctx, 'BACKEND NON CONFIGURATO', W/2, startY + 30, '#FF6060', 2);
-      drawTextCentered(ctx, 'Vedi docs/LEADERBOARD_SETUP.md per attivare la',
-                       W/2, startY + 60, '#FFFFFF', 1);
-      drawTextCentered(ctx, 'classifica online (5 minuti, gratis).',
-                       W/2, startY + 70, '#FFFFFF', 1);
+    const startY = 56;
+    const entries = this.onlineData[key];
+    if (this._renderLoadingOrError(ctx, key, startY)) return;
+    if (!entries || entries.length === 0) {
+      drawTextCentered(ctx, 'NESSUNA ENTRY ANCORA', W / 2, startY + 30, '#888888', 2);
+      drawTextCentered(ctx, 'Gioca questa gara per essere il primo!',
+                       W / 2, startY + 60, '#FFFFFF', 1);
       return;
     }
 
-    if (this.onlineLoading) {
-      drawTextCentered(ctx, 'CARICAMENTO...', W/2, startY + 40, '#88BBFF', 2);
-      return;
-    }
+    // Header — focus su TEMPO + DATA, punti in fondo come riferimento
+    const cx = { rank: 14, name: 42, gender: 168, time: 192, date: 282, points: 380 };
+    drawText(ctx, '#',         cx.rank,   startY, '#FFD700', 1);
+    drawText(ctx, 'GIOCATORE', cx.name,   startY, '#FFD700', 1);
+    drawText(ctx, 'S',         cx.gender, startY, '#FFD700', 1);
+    drawText(ctx, 'TEMPO',     cx.time,   startY, '#FFD700', 1);
+    drawText(ctx, 'DATA',      cx.date,   startY, '#FFD700', 1);
+    drawText(ctx, 'PT',        cx.points, startY, '#FFD700', 1);
+    ctx.fillStyle = '#FFD700';
+    ctx.fillRect(12, startY + 10, W - 24, 1);
 
-    if (this.onlineEntries === null) {
-      // Non ancora richiesto in questo turno: lo lancio
-      this._loadOnline();
-      drawTextCentered(ctx, 'CARICAMENTO...', W/2, startY + 40, '#88BBFF', 2);
-      return;
+    const myName = (this.game.profile.name || 'RUNNER').toUpperCase();
+    const maxRows = Math.min(18, entries.length);
+    for (let i = 0; i < maxRows; i++) {
+      const e = entries[i];
+      const ry = startY + 16 + i * 14;
+      const isMine = (e.player || '').toUpperCase() === myName;
+      const col = isMine ? '#FFD700' : '#FFFFFF';
+      drawText(ctx, `${e.position}.`, cx.rank, ry, '#FFD700', 1);
+      drawText(ctx, (e.player || '?').toUpperCase().substring(0, 11),
+               cx.name, ry, col, 1);
+      drawText(ctx, e.gender || '-', cx.gender, ry, '#AAAACC', 1);
+      drawText(ctx, fmtTime(e.timeSec || 0, 3), cx.time, ry, col, 1);
+      // Data formato DD/MM HH:MM
+      drawText(ctx, fmtDate(e.ts), cx.date, ry, '#88BBFF', 1);
+      drawText(ctx, `${e.points}`, cx.points, ry, col, 1);
     }
+  }
 
-    if (this.onlineEntries.length === 0) {
-      if (this.onlineError) {
-        drawTextCentered(ctx, 'ERRORE DI RETE',
-                         W/2, startY + 30, '#FF6060', 2);
-        drawTextCentered(ctx, this.onlineError.substring(0, 60),
-                         W/2, startY + 60, '#FF8080', 1);
-        drawTextCentered(ctx, '(prova il refresh in basso a destra)',
-                         W/2, startY + 75, '#888888', 1);
-      } else {
-        drawTextCentered(ctx, 'NESSUN PUNTEGGIO ANCORA',
-                         W/2, startY + 30, '#888888', 2);
-        drawTextCentered(ctx, 'Sii il primo a finire un campionato!',
-                         W/2, startY + 60, '#FFFFFF', 1);
+  // ============================================================
+  // HELPER
+  // ============================================================
+  _renderLoadingOrError(ctx, key, startY) {
+    const W = this.game.virtualW;
+    if (this.onlineLoading[key]) {
+      drawTextCentered(ctx, 'CARICAMENTO...', W / 2, startY + 40, '#88BBFF', 2);
+      return true;
+    }
+    if (this.onlineData[key] === undefined) {
+      // forza load
+      if (key === 'championship') this._ensureChampionshipLoaded();
+      else if (key.startsWith('top|')) {
+        const trackId = key.substring(4);
+        this._openDetail(trackId);
       }
-    } else {
-      // Header colonne
-      const cx = { rank: 28, name: 56, score: 290, time: 380, finisher: 470 };
-      drawText(ctx, '#',         cx.rank,     startY, '#FFD700', 1);
-      drawText(ctx, 'GIOCATORE', cx.name,     startY, '#FFD700', 1);
-      drawText(ctx, 'SCORE',     cx.score,    startY, '#FFD700', 1);
-      drawText(ctx, 'TEMPO',     cx.time,     startY, '#FFD700', 1);
-      drawText(ctx, 'FIN.',      cx.finisher, startY, '#FFD700', 1);
-
-      // Linea separatore
-      ctx.fillStyle = '#FFD700';
-      ctx.fillRect(20, startY + 10, W - 40, 1);
-
-      // Entries
-      const myName = (this.game.profile.name || 'RUNNER').toUpperCase();
-      for (let i = 0; i < Math.min(10, this.onlineEntries.length); i++) {
-        const e = this.onlineEntries[i];
-        const ry = startY + 16 + i * 12;
-        const isMine = (e.player || '').toUpperCase() === myName;
-        const col = isMine ? '#FFD700' : '#FFFFFF';
-        drawText(ctx, `${i + 1}.`,                       cx.rank,     ry, '#FFD700', 1);
-        drawText(ctx, (e.player || '?').toUpperCase().substring(0, 12), cx.name, ry, col, 1);
-        drawText(ctx, `${Math.round(e.score || 0)} PT`,  cx.score,    ry, col, 1);
-        drawText(ctx, fmtTime(e.timeSec || 0),           cx.time,     ry, col, 1);
-        // Finisher? Cerco nel campo extras (JSON serializzato)
-        let finisher = false;
-        if (e.extras && typeof e.extras === 'string') {
-          try { finisher = JSON.parse(e.extras).finisher === true; }
-          catch (err) { /* ignore */ }
-        } else if (e.extras && e.extras.finisher) {
-          finisher = true;
-        }
-        drawText(ctx, finisher ? '*' : '-', cx.finisher + 8, ry,
-                 finisher ? '#FFD700' : '#666688', 1);
-      }
+      drawTextCentered(ctx, 'CARICAMENTO...', W / 2, startY + 40, '#88BBFF', 2);
+      return true;
     }
-
-    // Refresh button in basso a destra
-    const rbX = W - 70, rbY = 320, rbW = 66, rbH = 16;
-    ctx.fillStyle = '#1F4FA8';
-    ctx.fillRect(rbX, rbY, rbW, rbH);
-    ctx.strokeStyle = '#88BBFF';
-    ctx.strokeRect(rbX + 0.5, rbY + 0.5, rbW - 1, rbH - 1);
-    drawTextCentered(ctx, 'REFRESH', rbX + rbW/2, rbY + 5, '#FFFFFF', 1);
+    return false;
   }
 }
 
-function fmtTime(sec) {
+/** Formatta secondi come "M:SS.mmm" con N decimali. */
+function fmtTime(sec, decimals = 2) {
   sec = Math.max(0, sec);
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = Math.floor(sec % 60);
-  const cs = Math.floor((sec * 100) % 100);
-  if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(cs).padStart(2,'0')}`;
-  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(cs).padStart(2,'0')}`;
+  const m = Math.floor(sec / 60);
+  const s = sec - m * 60;
+  if (m > 0) {
+    return `${m}:${s.toFixed(decimals).padStart(decimals + 3, '0')}`;
+  }
+  return `${s.toFixed(decimals)}s`;
+}
+
+/** Formatta timestamp ISO (es. "2026-05-12T14:23:01.000Z") come "DD/MM HH:MM" */
+function fmtDate(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    return `${dd}/${mm} ${hh}:${mi}`;
+  } catch (e) { return ''; }
 }

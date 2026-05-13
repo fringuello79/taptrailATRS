@@ -80,18 +80,34 @@ export class ModeSelectScene {
     drawTextCentered(ctx, label, W / 2, b2y + 8, '#FFFFFF', 1);
     if (championStarted && !championComplete) {
       const eventsDone = Object.keys(this.championshipState.completedEvents).length;
-      drawTextCentered(ctx, `progresso: ${eventsDone}/6 — ${this.championshipState.totalScore} pt`,
+      drawTextCentered(ctx, `progresso: ${eventsDone}/6 gare completate`,
                        W / 2, b2y + 22, '#FFEEAA', 1);
-      drawTextCentered(ctx, `prossima: evento ${this.championshipState.currentEventIndex + 1}`,
+      drawTextCentered(ctx, `classifica live nelle classifiche`,
                        W / 2, b2y + 35, '#FFEEAA', 1);
     } else if (!championStarted) {
       drawTextCentered(ctx, '6 eventi, 13 distanze', W / 2, b2y + 22, '#FFEEAA', 1);
       drawTextCentered(ctx, 'classifica online ufficiale', W / 2, b2y + 35, '#FFEEAA', 1);
     } else {
-      drawTextCentered(ctx, `punteggio finale: ${this.championshipState.totalScore} pt`,
+      drawTextCentered(ctx, 'campionato completato!',
                        W / 2, b2y + 22, '#FFEEAA', 1);
-      drawTextCentered(ctx, '(rivedi il riepilogo)', W / 2, b2y + 35, '#FFEEAA', 1);
+      drawTextCentered(ctx, 'vedi la classifica generale',
+                       W / 2, b2y + 35, '#FFEEAA', 1);
     }
+
+    // Istruzioni rapide (sopra al nickname)
+    const insY = H - 64;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(20, insY, W - 40, 42);
+    ctx.strokeStyle = '#88BBFF';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(20.5, insY + 0.5, W - 41, 41);
+    drawTextCentered(ctx, 'COME SI GIOCA', W / 2, insY + 3, '#FFD700', 1);
+    drawTextCentered(ctx, 'CORRI ALTERNANDO ← E → SU PC',
+                     W / 2, insY + 14, '#FFFFFF', 1);
+    drawTextCentered(ctx, 'O I DUE TASTI ROSSI SU MOBILE',
+                     W / 2, insY + 24, '#FFFFFF', 1);
+    drawTextCentered(ctx, 'PRESS [R] O IL BICCHIERE PER L\'ACQUA',
+                     W / 2, insY + 34, '#88FFCC', 1);
 
     drawTextCentered(ctx, this.game.profile.name.toUpperCase(),
                      W / 2, H - 14, '#88FFCC', 1);

@@ -37,10 +37,12 @@ export class ChampionshipFinalScene {
         this.game.changeState(GameState.CHAMPIONSHIP_HUB);
         return;
       }
-      // Invia online: ora fa davvero il POST
+      // Vedi classifica campionato: naviga a LeaderboardScene (la vista CAMPIONATO
+      // mostra la classifica generale, già aggiornata con tutte le gare giocate
+      // durante il campionato che sono state inviate automaticamente).
       if (c.x > W/2 - 100 && c.x < W/2 - 4 && c.y > H - 20 && c.y < H - 4) {
-        if (this.submitStatus === 'sending') return; // anti-doppio-click
-        this._submitOnline();
+        this.game.audio.beep(660, 0.10);
+        this.game.changeState(GameState.LEADERBOARD);
         return;
       }
       // Nuovo campionato
@@ -164,26 +166,23 @@ export class ChampionshipFinalScene {
         .replace(/^Gran Sasso /, 'GRAN SASSO ')
         .toUpperCase();
       drawText(ctx, shortName.substring(0, 22), lx + 16, ry + 4, '#FFFFFF', 1);
-      // Tempo / stato (padding di 96px da destra per lasciare spazio al punteggio)
-      const stateX = lx + rowW - 110;
+      // Tempo o stato — niente più punteggio client (era inattendibile)
+      const stateX = lx + rowW - 80;
       if (r.completed) {
         const m = Math.floor(r.timeSec / 60);
         const s = Math.floor(r.timeSec % 60);
-        const cs = Math.floor((r.timeSec * 100) % 100);
-        drawText(ctx, `${m}:${String(s).padStart(2,'0')}.${String(cs).padStart(2,'0')}`,
-                 stateX, ry + 4, '#88FFCC', 1);
-        // Punteggio a destra (right-align)
-        const scoreText = `${r.score}P`;
-        drawText(ctx, scoreText, lx + rowW - 36, ry + 4, '#FFD700', 1);
+        const ms = Math.floor((r.timeSec * 1000) % 1000);
+        drawText(ctx,
+          `${m}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`,
+          stateX, ry + 4, '#88FFCC', 1);
       } else if (r.skipped) {
         drawText(ctx, 'MOLLATA', stateX, ry + 4, '#FF6060', 1);
-        drawText(ctx, '0', lx + rowW - 14, ry + 4, '#888888', 1);
       } else {
         drawText(ctx, '—', stateX + 30, ry + 4, '#666688', 1);
       }
     }
 
-    // Score finale (sotto la lista, larghezza completa, leggibile)
+    // Messaggio motivazionale (sostituisce il box punteggio client inattendibile)
     const sy = 42 + this.summary.races.length * 18 + 6;
     const boxW = rowW;
     const boxH = 36;
@@ -192,40 +191,18 @@ export class ChampionshipFinalScene {
     ctx.strokeStyle = '#FFD700';
     ctx.lineWidth = 2;
     ctx.strokeRect(lx + 1, sy + 1, boxW - 2, boxH - 2);
-    // Testi a sinistra (gare + bonus)
-    drawText(ctx, 'GARE: ' + this.summary.totalRaceScore, lx + 6, sy + 4, '#FFFFFF', 1);
-    if (this.summary.bonus > 0) {
-      drawText(ctx, 'BONUS: +' + this.summary.bonus, lx + 6, sy + 18, '#88FFCC', 1);
-    } else {
-      drawText(ctx, 'BONUS: -', lx + 6, sy + 18, '#888888', 1);
-    }
-    // Totale a destra (right-aligned grande)
-    const totaleLabel = 'TOTALE';
-    drawText(ctx, totaleLabel, lx + boxW - 110, sy + 4, '#FFD700', 1);
-    drawText(ctx, String(this.summary.finalTotal),
-             lx + boxW - 80, sy + 14, '#FFD700', 2);
+    const completedCount = this.summary.races.filter(r => r.completed).length;
+    drawTextCentered(ctx, `CAMPIONATO COMPLETATO! ${completedCount}/6 GARE`,
+                     lx + boxW / 2, sy + 6, '#FFD700', 1);
+    drawTextCentered(ctx, 'VEDI LA CLASSIFICA UFFICIALE',
+                     lx + boxW / 2, sy + 20, '#FFFFFF', 1);
 
     // pulsanti in basso (centrati)
     const by = H - 18;
-    // Bottone INVIA ONLINE - colore in base allo stato submit
-    let sendBg = '#1F4FA8';      // idle (blu)
-    let sendLabel = 'INVIA ONLINE';
-    if (this.submitStatus === 'sending') {
-      sendBg = '#806020';         // arancione: in corso
-      sendLabel = 'INVIO...';
-    } else if (this.submitStatus === 'ok') {
-      sendBg = '#2E8B3A';         // verde: ok
-      sendLabel = 'INVIATO';
-    } else if (this.submitStatus === 'queued') {
-      sendBg = '#806020';         // arancione: in coda
-      sendLabel = 'IN CODA';
-    } else if (this.submitStatus === 'error' || this.submitStatus === 'unconfigured') {
-      sendBg = '#A03020';         // rosso: errore o non configurato
-      sendLabel = this.submitStatus === 'unconfigured' ? 'NO BACKEND' : 'ERRORE';
-    }
-    ctx.fillStyle = sendBg;
+    // Bottone VEDI CLASSIFICA (porta a LeaderboardScene tab CAMPIONATO)
+    ctx.fillStyle = '#1F4FA8';
     ctx.fillRect(W/2 - 100, by, 96, 14);
-    drawTextCentered(ctx, sendLabel, W/2 - 52, by + 4, '#FFFFFF', 1);
+    drawTextCentered(ctx, 'CLASSIFICA', W/2 - 52, by + 4, '#FFFFFF', 1);
 
     ctx.fillStyle = this.confirmReset ? '#A03020' : '#2E8B3A';
     ctx.fillRect(W/2 + 4, by, 96, 14);

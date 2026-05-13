@@ -64,6 +64,19 @@ export class RaceScene {
     // Stamina nuova generazione (consumo lento sempre, accelera con sprint/salita,
     // recupera rallentando, ristori ricaricano).
     this.staminaT = new StaminaT();
+    // Carry-over stamina nel campionato: la prossima gara parte da dove era rimasta
+    // (più un piccolo recupero, gestito da computeCarryStamina in Championship.js)
+    if (this.mode === 'championship') {
+      const cs = loadChampionship();
+      if (typeof cs.carryStamina === 'number' && cs.started) {
+        this.staminaT.stamina = cs.carryStamina;
+        this.startStamina = cs.carryStamina;
+      } else {
+        this.startStamina = 100;
+      }
+    } else {
+      this.startStamina = 100;
+    }
 
     // Lista ristori per questa gara (dinamica in base alla distanza)
     this._refreshments = refreshmentsFor(this.track.distanceKm);
@@ -78,13 +91,6 @@ export class RaceScene {
     game.input.setTapZones([
       { name: 'water', ...this._waterButtonRect },
     ]);
-
-    // (FASE 2: carry-over stamina campionato → resta inattivo)
-    if (this.mode === 'championship') {
-      this.startStamina = 100;
-    } else {
-      this.startStamina = 100;
-    }
     this.weather = new Weather(track.weather || 'clear_dawn');
     this.hud = new HUD(game.virtualW, game.virtualH);
     this.minimap = new Minimap(game.virtualW, game.virtualH);
@@ -173,7 +179,7 @@ export class RaceScene {
       this.countdown -= dt;
       if (this.countdown <= 0) {
         this.started = true;
-        this.game.audio.beep(880, 0.2, 'square');
+        this.game.audio.gunshot();
         // Avvio musica motivazionale di sottofondo
         this.game.audio.startBackgroundMusic();
       }
@@ -519,8 +525,8 @@ export class RaceScene {
       }
     }
 
-    // 5. ghost del PB davanti (silhouette)
-    if (this.ghostProgress !== null && this.ghostProgress > 0 && this.ghostProgress < 1) {
+    // 5. ghost del PB davanti (silhouette) — visibile fino a progress 1 (traguardo incluso)
+    if (this.ghostProgress !== null && this.ghostProgress > 0) {
       const wx = this.ghostProgress * totalWorldPx;
       const sx = wx - viewLeft;
       if (sx > -30 && sx < W + 30) {
@@ -627,10 +633,19 @@ export class RaceScene {
       }
     }
 
-    // 11. countdown overlay
+    // 11. countdown overlay con reminder istruzioni
     if (!this.started) {
       ctx.fillStyle = 'rgba(0,0,0,0.5)';
       ctx.fillRect(0, 0, W, H);
+      // Reminder istruzioni in alto (lampeggio discreto)
+      const blink = Math.floor(this.timer * 4) % 4 !== 3;
+      if (blink) {
+        drawTextCentered(ctx, '← →  ALTERNA I TAP  ← →',
+                         W / 2, H / 2 - 64, '#FFFF88', 2);
+      }
+      drawTextCentered(ctx, '[R] O BICCHIERE D\'ACQUA = RISTORO',
+                       W / 2, H / 2 - 42, '#88FFCC', 1);
+      // Cifra del countdown / VIA
       const c = Math.ceil(this.countdown - 0.5);
       const txt = c > 0 ? String(c) : 'VIA!';
       drawTextCentered(ctx, txt, W / 2, H / 2 - 6, '#FFD700', 4);
@@ -686,11 +701,7 @@ export class RaceScene {
       drawTextCentered(ctx, 'CALCOLO RISULTATI...', W / 2, H / 2 + 14, '#FFFFFF', 1);
     }
 
-    // 14. istruzione iniziale
-    if (this.started && this.timer < 4) {
-      drawTextCentered(ctx, 'TAP PER CORRERE - SPAZIO/CLICK/TOCCA',
-                       W / 2, H - 70, '#FFFFFF', 1);
-    }
+    // (Le istruzioni di gioco sono mostrate durante il countdown, vedi sezione 11)
   }
 
   _goToResults() {
@@ -718,10 +729,10 @@ export class RaceScene {
       distanceKmFull: this.track.distanceKm,
       gainMFull: this.track.elevationGainM || 0,
       // tracking stile
-      finalStamina: Math.round(this.stamina.stamina),
+      finalStamina: Math.round(this.staminaT.stamina),
       timeInThresholdRatio: this.timer > 0 ? this.timeInThreshold / this.timer : 0,
       hadCramp: this.hadCramp,
-      staminaAtSkip: this.skipped ? Math.round(this.stamina.stamina) : null,
+      staminaAtSkip: this.skipped ? Math.round(this.staminaT.stamina) : null,
     };
 
     // salva record (solo gare singole completate, non in modalità campionato)
@@ -735,6 +746,10 @@ export class RaceScene {
         gender: this.character.gender,
       });
       if (result.isPB) {
+        // Sample finale al traguardo: garantisce che il ghost arrivi a progress=1
+        // (senza questo, l'ultimo sample registrato è il penultimo della corsa
+        // e il ghost si fermerebbe prima del traguardo nella prossima partita)
+        this.mySamples.push({ t: this.timer, p: 1 });
         this.game.storage.saveGhost(this.track.id, this.mySamples);
       }
       const profile = this.game.profile;
