@@ -75,6 +75,12 @@ const GLYPHS = {
   '—': ['.....','.....','.....','XXXXX','.....','.....','.....'],
   // triangolo destro (puntatore menu)
   '►': ['XX...','XXX..','XXXX.','XXXXX','XXXX.','XXX..','XX...'],
+  // freccia sinistra
+  '←': ['.....','.X...','XX...','XXXXX','XX...','.X...','.....'],
+  // freccia destra
+  '→': ['.....','...X.','...XX','XXXXX','...XX','...X.','.....'],
+  // segno di spunta (check)
+  '✓': ['.....','....X','...X.','X..X.','.X.X.','..X..','.....'],
   // chiocciola
   '@': ['.XXX.','X...X','X.XXX','X.X.X','X.XXX','X....','.XXX.'],
 };
