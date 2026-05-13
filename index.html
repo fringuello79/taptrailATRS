@@ -18,8 +18,6 @@
       -webkit-touch-callout: none;
       -webkit-tap-highlight-color: transparent;
     }
-
-    /* Layout DEFAULT (desktop e mobile orizzontale): canvas centrato, niente pulsanti */
     body {
       display: flex;
       align-items: center;
@@ -36,9 +34,6 @@
       touch-action: none;
       cursor: pointer;
     }
-    #mobile-controls {
-      display: none;   /* nascosti di default */
-    }
     #loading {
       position: absolute;
       top: 50%; left: 50%;
@@ -53,131 +48,11 @@
       border-radius: 3px;
       color: #88FFCC;
     }
-
-    /* ============= LAYOUT MOBILE VERTICALE ============= */
-    /* Si attiva SOLO se: schermo verticale (portrait) + touch device + max larghezza tipica mobile.
-       Su desktop niente di tutto questo. Su tablet orizzontale niente di tutto questo. */
-    @media (orientation: portrait) and (pointer: coarse) and (max-width: 900px) {
-      body {
-        flex-direction: column;
-        justify-content: flex-start;   /* canvas in alto */
-        align-items: stretch;
-        padding: 0;
-      }
-      #gameCanvas {
-        width: 100vw;
-        height: auto;     /* mantiene aspect ratio 16:9 */
-        max-height: 56vh; /* lascio spazio sotto per i tasti */
-        margin: 0;
-      }
-      #mobile-controls {
-        display: flex;
-        flex: 1;          /* riempie spazio rimanente sotto il canvas */
-        flex-direction: row;
-        gap: 8px;
-        padding: 8px;
-        background: #0a0a14;
-      }
-      .mobile-btn {
-        flex: 1;
-        background: linear-gradient(180deg, #d63838 0%, #a82828 60%, #861d1d 100%);
-        border: 3px solid #f0a0a0;
-        border-radius: 12px;
-        color: #fff;
-        font-size: 96px;
-        font-weight: bold;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        touch-action: none;
-        -webkit-tap-highlight-color: transparent;
-        box-shadow: 0 4px 0 #5a1414, inset 0 2px 8px rgba(255,255,255,0.2);
-        transition: transform 0.05s, box-shadow 0.05s;
-        user-select: none;
-      }
-      .mobile-btn:active,
-      .mobile-btn.pressed {
-        transform: translateY(3px);
-        box-shadow: 0 1px 0 #5a1414, inset 0 4px 12px rgba(0,0,0,0.4);
-        background: linear-gradient(180deg, #b82828 0%, #8a1d1d 60%, #661010 100%);
-      }
-      .mobile-btn-arrow {
-        line-height: 1;
-        text-shadow: 2px 2px 0 #5a1414;
-      }
-    }
   </style>
 </head>
 <body>
   <canvas id="gameCanvas" width="480" height="270"></canvas>
-  <div id="mobile-controls">
-    <button class="mobile-btn" id="btn-left">
-      <span class="mobile-btn-arrow">◄</span>
-    </button>
-    <button class="mobile-btn" id="btn-right">
-      <span class="mobile-btn-arrow">►</span>
-    </button>
-  </div>
   <div id="loading">CARICAMENTO TAP TRAIL V2...</div>
   <script type="module" src="src/main.js"></script>
-  <script>
-    // Collego i pulsanti mobile al gioco. Il riferimento window.__game viene
-    // creato da main.js dopo il caricamento, quindi aspetto che sia pronto.
-    function bindMobileButtons() {
-      const btnL = document.getElementById('btn-left');
-      const btnR = document.getElementById('btn-right');
-      if (!btnL || !btnR) return;
-
-      function makeHandler(side) {
-        return (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const game = window.__game;
-          if (!game || !game.input) return;
-          if (side === 'L') game.input.tapLeft();
-          else game.input.tapRight();
-          game.input.setButtonHeld(side, true);
-        };
-      }
-      function makeRelease(side) {
-        return (e) => {
-          e.preventDefault();
-          const game = window.__game;
-          if (!game || !game.input) return;
-          game.input.setButtonHeld(side, false);
-        };
-      }
-
-      // Touch events (mobile primario)
-      btnL.addEventListener('touchstart', makeHandler('L'), { passive: false });
-      btnR.addEventListener('touchstart', makeHandler('R'), { passive: false });
-      btnL.addEventListener('touchend',   makeRelease('L'), { passive: false });
-      btnR.addEventListener('touchend',   makeRelease('R'), { passive: false });
-      btnL.addEventListener('touchcancel', makeRelease('L'), { passive: false });
-      btnR.addEventListener('touchcancel', makeRelease('R'), { passive: false });
-
-      // Mouse events (test su desktop in modalità responsive)
-      btnL.addEventListener('mousedown', makeHandler('L'));
-      btnR.addEventListener('mousedown', makeHandler('R'));
-      btnL.addEventListener('mouseup',   makeRelease('L'));
-      btnR.addEventListener('mouseup',   makeRelease('R'));
-      btnL.addEventListener('mouseleave', makeRelease('L'));
-      btnR.addEventListener('mouseleave', makeRelease('R'));
-    }
-
-    // Aspetto che il gioco sia pronto (poll ogni 100ms, max 5s)
-    let attempts = 0;
-    const interval = setInterval(() => {
-      attempts++;
-      if (window.__game && window.__game.input) {
-        clearInterval(interval);
-        bindMobileButtons();
-      } else if (attempts > 50) {
-        clearInterval(interval);
-        console.warn('[mobile] game non disponibile dopo 5s, pulsanti non agganciati');
-      }
-    }, 100);
-  </script>
 </body>
 </html>

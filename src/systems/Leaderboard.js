@@ -1,20 +1,25 @@
 // src/systems/Leaderboard.js
 // Client per la leaderboard online ATRS 2026.
 //
-// Il backend (Google Apps Script) calcola i punti server-side secondo regolamento:
-//   - action=top         → classifica posizionale ATRS (one-per-player + punti + UTMB)
-//   - action=times       → classifica tempi assoluti (multi-entry per atleta)
-//   - action=championship → classifica generale (somma punti + bonus 5/6, 6/6)
+// Pattern derivato da "Pepper Drop – Bocca di Fuoco":
+//   - Backend è un Google Apps Script Web App (vedi docs/LEADERBOARD_SETUP.md).
+//   - GET <URL>?action=top&board=<id>&n=20 → JSON array di entries.
+//   - POST <URL> con body application/x-www-form-urlencoded → append a Google Sheet.
+//     Usiamo URL-encoded (non JSON) per evitare il preflight CORS che gli
+//     Apps Script Web Apps non gestiscono. Stesso trucco di Pepper Drop.
 //
-// Submit:
-//   - POST body URL-encoded (no preflight CORS, gestito da Apps Script)
-//   - inviamo SOLO il tempo (timeSec con decimali), niente score: il server lo calcola
-//   - clientId stabile per anti-duplicato (se l'utente clicca due volte)
+// Boards (id stringa che il client passa al backend):
+//   - 'championship'      → classifica del campionato (score totale + tempo cumulato)
+//   - <track-id>          → classifica della singola gara (es. 'voltigno-19k')
 //
 // Robustezza:
-//   - Se LEADERBOARD_URL è vuoto, modalità OFFLINE: isAvailable()=false.
-//   - Submit in coda (localStorage) se rete fallisce, riprova al prossimo fetch/submit.
-//   - Cache GET 30s per ridurre carico.
+//   - Se LEADERBOARD_URL è vuoto, modalità OFFLINE: nessuna chiamata, isAvailable()=false.
+//   - Submit asincrono con timeout: se la rete fallisce, si salva in coda di re-submit
+//     (localStorage) e si ritenta al prossimo submit/fetch.
+//   - Idempotenza: ogni submit ha un clientId stabile (player+board+timeSec+score
+//     hash) che il backend usa per scartare duplicati se l'utente clicca due volte.
+//   - fetchTop ha cache 30s per board (così aprire la classifica più volte non
+//     martella il backend).
 
 import {
   LEADERBOARD_URL,
@@ -22,8 +27,8 @@ import {
   LEADERBOARD_TIMEOUT_MS,
 } from '../config.js';
 
-const PENDING_KEY = 'taptrail.leaderboard.pending.v2';
-const CACHE_PREFIX = 'taptrail.leaderboard.cache.v2.';
+const PENDING_KEY = 'taptrail.leaderboard.pending.v1';
+const CACHE_PREFIX = 'taptrail.leaderboard.cache.v1.';
 const CACHE_TTL_MS = 30 * 1000;
 
 /** Hash stringa → int 32 bit (FNV-1a). Usata per clientId stabile. */
@@ -36,6 +41,7 @@ function fnv1a(str) {
   return h.toString(16);
 }
 
+/** fetch con timeout. Lancia eccezione su timeout. */
 async function fetchWithTimeout(url, opts = {}, ms = LEADERBOARD_TIMEOUT_MS) {
   const ctrl = new AbortController();
   const id = setTimeout(() => ctrl.abort(), ms);
@@ -46,6 +52,7 @@ async function fetchWithTimeout(url, opts = {}, ms = LEADERBOARD_TIMEOUT_MS) {
   }
 }
 
+/** Encoder URL-form da oggetto (gestisce undefined/null escludendoli). */
 function urlEncode(obj) {
   const parts = [];
   for (const [k, v] of Object.entries(obj)) {
@@ -55,6 +62,7 @@ function urlEncode(obj) {
   return parts.join('&');
 }
 
+/** Carica/salva le entry pendenti (submit falliti). */
 function loadPending() {
   try {
     const raw = localStorage.getItem(PENDING_KEY);
@@ -63,32 +71,25 @@ function loadPending() {
 }
 function savePending(arr) {
   try { localStorage.setItem(PENDING_KEY, JSON.stringify(arr)); }
-  catch (e) {}
+  catch (e) { /* ignore */ }
 }
 
-function readCache(key) {
+/** Cache GET per board. */
+function readCache(board) {
   try {
-    const raw = localStorage.getItem(CACHE_PREFIX + key);
+    const raw = localStorage.getItem(CACHE_PREFIX + board);
     if (!raw) return null;
     const obj = JSON.parse(raw);
     if (Date.now() - obj.t > CACHE_TTL_MS) return null;
     return obj.data;
   } catch (e) { return null; }
 }
-function writeCache(key, data) {
+function writeCache(board, data) {
   try {
-    localStorage.setItem(CACHE_PREFIX + key, JSON.stringify({
+    localStorage.setItem(CACHE_PREFIX + board, JSON.stringify({
       t: Date.now(), data,
     }));
-  } catch (e) {}
-}
-function invalidateAllCache() {
-  try {
-    for (let i = localStorage.length - 1; i >= 0; i--) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(CACHE_PREFIX)) localStorage.removeItem(k);
-    }
-  } catch (e) {}
+  } catch (e) { /* ignore */ }
 }
 
 export class Leaderboard {
@@ -97,80 +98,91 @@ export class Leaderboard {
     this.lastError = null;
   }
 
+  /** True se il backend è configurato (non significa raggiungibile). */
   isAvailable() {
     return this.url.length > 0;
   }
 
-  /** ClientId stabile per anti-duplicato (stessa partita = stessa entry). */
+  /** Costruisce un clientId stabile per scartare doppi-submit lato server. */
   _clientIdFor(entry) {
     const sig = [
       entry.player || '',
+      entry.board || '',
+      Math.round((entry.timeSec || 0) * 100),
+      Math.round(entry.score || 0),
+      entry.eventId || '',
       entry.trackId || '',
-      Math.round((entry.timeSec || 0) * 1000),   // 3 decimali
-      entry.gender || '',
-      Date.now() % 100000,   // permette ri-submit DOPO un po' di tempo
     ].join('|');
     return 'tt2-' + fnv1a(sig);
   }
 
-  /** Submit di un risultato gara.
+  /** Submit di un punteggio. Ritorna { ok, queued, message }.
+   *  - ok=true: il backend ha confermato l'append.
+   *  - queued=true: la rete ha fallito ma l'entry è in coda per riprovare.
+   *  - ok=false, queued=false: backend non configurato (LEADERBOARD_URL vuoto).
+   *
    *  entry: {
-   *    player: string,
-   *    gender: 'M' | 'F',
-   *    trackId: string,
-   *    timeSec: number   (tempo della gara con decimali, 3 cifre dopo la virgola)
-   *    distanceKm: number,
-   *    completed: boolean
-   *    mode: 'single' | 'championship'
-   *  }
-   *  Ritorna { ok, queued, message, duplicate? } */
+   *    player:   string  (obbligatorio)
+   *    board:    string  (obbligatorio: 'championship' o trackId)
+   *    mode:     'single' | 'championship'
+   *    timeSec:  number   (tempo della gara o cumulato campionato)
+   *    score:    number   (punteggio ATRS)
+   *    eventId?: string
+   *    trackId?: string
+   *    distanceKm?: number
+   *    gainM?:   number
+   *    finalStamina?: number
+   *    extras?:  object   (campi liberi: serializzati come JSON nel payload)
+   *  } */
   async submitScore(entry) {
     if (!this.isAvailable()) {
       return { ok: false, queued: false,
                message: 'BACKEND NON CONFIGURATO' };
     }
-    if (!entry.player || !entry.trackId) {
+    if (!entry.player || !entry.board) {
       return { ok: false, queued: false, message: 'PARAMETRI MANCANTI' };
     }
 
     const clientId = this._clientIdFor(entry);
     const payload = {
+      action: 'submit',
       clientId,
       player: entry.player,
-      gender: entry.gender || '',
-      trackId: entry.trackId,
-      // 3 decimali (millisecondi visibili). Il server accetta float.
-      timeSec: Math.round((entry.timeSec || 0) * 1000) / 1000,
-      distanceKm: entry.distanceKm || 0,
-      completed: entry.completed ? 'true' : 'false',
+      board: entry.board,
       mode: entry.mode || 'single',
+      timeSec: Math.round((entry.timeSec || 0) * 100) / 100,
+      score: Math.round(entry.score || 0),
+      eventId: entry.eventId || '',
+      trackId: entry.trackId || '',
+      distanceKm: entry.distanceKm || 0,
+      gainM: entry.gainM || 0,
+      finalStamina: entry.finalStamina || 0,
+      date: new Date().toISOString(),
+      extras: entry.extras ? JSON.stringify(entry.extras) : '',
     };
 
+    // Provo a inviare. Se ho cose in coda, le invio prima di questa.
     await this._flushPending();
 
     try {
       const res = await fetchWithTimeout(this.url, {
         method: 'POST',
+        // application/x-www-form-urlencoded → "simple request" CORS, niente preflight
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: urlEncode(payload),
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const json = await res.json();
-      if (!json || (json.ok !== true && !json.duplicate)) {
-        throw new Error(json?.error || 'risposta non valida');
-      }
-      // invalida cache: la prossima fetch sarà fresca
-      invalidateAllCache();
+      if (!json || json.ok !== true) throw new Error(json?.error || 'risposta non valida');
+      // invalidare cache GET di questo board: la prossima fetchTop riprende fresca
+      try { localStorage.removeItem(CACHE_PREFIX + entry.board); } catch (e) {}
       this.lastError = null;
-      return {
-        ok: true,
-        queued: false,
-        duplicate: !!json.duplicate,
-        message: json.duplicate ? 'GIÀ INVIATO' : 'INVIATO',
-      };
+      return { ok: true, queued: false, message: 'INVIATO' };
     } catch (err) {
+      // metto in coda
       const pending = loadPending();
       pending.push({ ...payload, _queuedAt: Date.now() });
+      // limite ragionevole: max 50 entries in coda (cap per non far crescere senza fine)
       while (pending.length > 50) pending.shift();
       savePending(pending);
       this.lastError = err.message || String(err);
@@ -179,82 +191,36 @@ export class Leaderboard {
     }
   }
 
-  /** Classifica PUNTI ATRS per una gara (one-per-player + punti per posizione). */
-  async fetchTop(trackId, n = LEADERBOARD_TOP_N) {
-    if (!this.isAvailable() || !trackId) return [];
-    const cacheKey = 'top|' + trackId + '|' + n;
-    const cached = readCache(cacheKey);
-    if (cached) return cached;
-    try {
-      const url = this.url
-        + (this.url.includes('?') ? '&' : '?')
-        + 'action=top&trackId=' + encodeURIComponent(trackId)
-        + '&n=' + encodeURIComponent(n);
-      const res = await fetchWithTimeout(url, { method: 'GET' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const json = await res.json();
-      if (!Array.isArray(json)) throw new Error('formato non valido');
-      writeCache(cacheKey, json);
-      this.lastError = null;
-      return json;
-    } catch (err) {
-      this.lastError = err.message || String(err);
-      return [];
-    }
-  }
-
-  /** Classifica TEMPI assoluti per una gara (tutte le entries, multi-per-atleta). */
-  async fetchTimes(trackId, n = LEADERBOARD_TOP_N) {
-    if (!this.isAvailable() || !trackId) return [];
-    const cacheKey = 'times|' + trackId + '|' + n;
-    const cached = readCache(cacheKey);
-    if (cached) return cached;
-    try {
-      const url = this.url
-        + (this.url.includes('?') ? '&' : '?')
-        + 'action=times&trackId=' + encodeURIComponent(trackId)
-        + '&n=' + encodeURIComponent(n);
-      const res = await fetchWithTimeout(url, { method: 'GET' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const json = await res.json();
-      if (!Array.isArray(json)) throw new Error('formato non valido');
-      writeCache(cacheKey, json);
-      this.lastError = null;
-      return json;
-    } catch (err) {
-      this.lastError = err.message || String(err);
-      return [];
-    }
-  }
-
-  /** Classifica generale campionato (filtro per genere opzionale). */
-  async fetchChampionship(gender = '') {
+  /** Fetcha la top-N classifica per un board. Ritorna array (eventualmente []). */
+  async fetchTop(board, n = LEADERBOARD_TOP_N) {
     if (!this.isAvailable()) return [];
-    const cacheKey = 'champ|' + gender;
-    const cached = readCache(cacheKey);
+    const cached = readCache(board);
     if (cached) return cached;
     try {
       const url = this.url
         + (this.url.includes('?') ? '&' : '?')
-        + 'action=championship'
-        + (gender ? '&gender=' + encodeURIComponent(gender) : '');
+        + 'action=top&board=' + encodeURIComponent(board)
+        + '&n=' + encodeURIComponent(n);
       const res = await fetchWithTimeout(url, { method: 'GET' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const json = await res.json();
       if (!Array.isArray(json)) throw new Error('formato non valido');
-      writeCache(cacheKey, json);
+      writeCache(board, json);
       this.lastError = null;
       return json;
     } catch (err) {
       this.lastError = err.message || String(err);
-      return [];
+      return [];   // graceful: nessun crash dell'UI
     }
   }
 
+  /** Quante entries sono ancora in coda di submit (per UI). */
   pendingCount() {
     return loadPending().length;
   }
 
+  /** Riprova a inviare le entries in coda. Si ferma alla prima che fallisce
+   *  (probabile rete ancora down). Ritorna numero di entries effettivamente inviate. */
   async _flushPending() {
     if (!this.isAvailable()) return 0;
     const pending = loadPending();
@@ -262,6 +228,7 @@ export class Leaderboard {
     let sent = 0;
     while (pending.length > 0) {
       const item = pending[0];
+      // tolgo i campi privati prima di inviare
       const { _queuedAt, ...payload } = item;
       try {
         const res = await fetchWithTimeout(this.url, {
@@ -271,12 +238,11 @@ export class Leaderboard {
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const json = await res.json();
-        if (!json || (json.ok !== true && !json.duplicate)) {
-          throw new Error(json?.error || 'risposta non valida');
-        }
+        if (!json || json.ok !== true) throw new Error(json?.error || 'risposta non valida');
         pending.shift();
         sent += 1;
       } catch (err) {
+        // rete ancora KO: salvo e mi fermo
         savePending(pending);
         return sent;
       }
@@ -286,4 +252,5 @@ export class Leaderboard {
   }
 }
 
+// Singleton: un solo client per tutta l'app (così la cache+coda è condivisa).
 export const leaderboard = new Leaderboard();

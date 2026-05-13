@@ -64,18 +64,23 @@ export class ResultsScene {
   }
 
   /** Submit silenzioso (no UI loud) della singola gara del campionato.
-   *  Il backend calcola i punti server-side, qui inviamo solo il tempo. */
+   *  Board=trackId. L'utente non aspetta: la classifica per gara si popola
+   *  nel tempo. Errori/coda restano nel sistema fallback localStorage. */
   _autoSubmitChampionshipRace() {
     const r = this.result;
     leaderboard.submitScore({
       player: (r.character && r.character.name) || this.game.profile.name || 'RUNNER',
-      gender: (r.character && r.character.gender === 'female') ? 'F' : 'M',
-      trackId: r.trackId,
+      board: r.trackId,
       mode: 'championship',
       timeSec: r.time,
+      score: this.scoring ? this.scoring.finalScore : 0,
+      eventId: r.eventId || '',
+      trackId: r.trackId,
       distanceKm: r.distanceKmFull || r.distanceKm || 0,
-      completed: !!r.finished,
+      gainM: r.gainMFull || 0,
+      finalStamina: r.finalStamina || 0,
     }).catch(err => {
+      // submit silenzioso: niente alert. Il sistema retry-flush ci penserà.
       console.log('[Results] Auto-submit fallito (in coda):', err);
     });
   }
@@ -217,16 +222,19 @@ export class ResultsScene {
 
     leaderboard.submitScore({
       player: (r.character && r.character.name) || this.game.profile.name || 'RUNNER',
-      gender: (r.character && r.character.gender === 'female') ? 'F' : 'M',
-      trackId: r.trackId,
+      board: r.trackId,
       mode: 'single',
       timeSec: r.time,
+      score: this.scoring ? this.scoring.finalScore : 0,
+      eventId: r.eventId || '',
+      trackId: r.trackId,
       distanceKm: r.distanceKmFull || r.distanceKm || 0,
-      completed: !!r.finished,
+      gainM: r.gainMFull || 0,
+      finalStamina: r.finalStamina || 0,
     }).then(res => {
       if (res.ok) {
         this.submitStatus = 'ok';
-        this.submitMessage = res.duplicate ? 'GIÀ INVIATO ✓' : 'INVIATO ✓';
+        this.submitMessage = 'INVIATO ✓';
         this.game.audio.beep(880, 0.15);
       } else if (res.queued) {
         this.submitStatus = 'queued';

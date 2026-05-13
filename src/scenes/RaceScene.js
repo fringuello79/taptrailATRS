@@ -64,19 +64,6 @@ export class RaceScene {
     // Stamina nuova generazione (consumo lento sempre, accelera con sprint/salita,
     // recupera rallentando, ristori ricaricano).
     this.staminaT = new StaminaT();
-    // Carry-over stamina nel campionato: la prossima gara parte da dove era rimasta
-    // (più un piccolo recupero, gestito da computeCarryStamina in Championship.js)
-    if (this.mode === 'championship') {
-      const cs = loadChampionship();
-      if (typeof cs.carryStamina === 'number' && cs.started) {
-        this.staminaT.stamina = cs.carryStamina;
-        this.startStamina = cs.carryStamina;
-      } else {
-        this.startStamina = 100;
-      }
-    } else {
-      this.startStamina = 100;
-    }
 
     // Lista ristori per questa gara (dinamica in base alla distanza)
     this._refreshments = refreshmentsFor(this.track.distanceKm);
@@ -91,6 +78,13 @@ export class RaceScene {
     game.input.setTapZones([
       { name: 'water', ...this._waterButtonRect },
     ]);
+
+    // (FASE 2: carry-over stamina campionato → resta inattivo)
+    if (this.mode === 'championship') {
+      this.startStamina = 100;
+    } else {
+      this.startStamina = 100;
+    }
     this.weather = new Weather(track.weather || 'clear_dawn');
     this.hud = new HUD(game.virtualW, game.virtualH);
     this.minimap = new Minimap(game.virtualW, game.virtualH);
@@ -179,7 +173,7 @@ export class RaceScene {
       this.countdown -= dt;
       if (this.countdown <= 0) {
         this.started = true;
-        this.game.audio.gunshot();
+        this.game.audio.beep(880, 0.2, 'square');
         // Avvio musica motivazionale di sottofondo
         this.game.audio.startBackgroundMusic();
       }
@@ -724,10 +718,10 @@ export class RaceScene {
       distanceKmFull: this.track.distanceKm,
       gainMFull: this.track.elevationGainM || 0,
       // tracking stile
-      finalStamina: Math.round(this.staminaT.stamina),
+      finalStamina: Math.round(this.stamina.stamina),
       timeInThresholdRatio: this.timer > 0 ? this.timeInThreshold / this.timer : 0,
       hadCramp: this.hadCramp,
-      staminaAtSkip: this.skipped ? Math.round(this.staminaT.stamina) : null,
+      staminaAtSkip: this.skipped ? Math.round(this.stamina.stamina) : null,
     };
 
     // salva record (solo gare singole completate, non in modalità campionato)

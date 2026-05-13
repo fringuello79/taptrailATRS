@@ -186,18 +186,6 @@ export class Input {
     return (xRel < rect.width / 2) ? 'L' : 'R';
   }
 
-  /** API pubblica per pulsanti UI (es. tasti grossi su mobile verticale).
-   *  Innesca un tap programmatico sul lato specificato, rispettando l'alternanza. */
-  tapLeft()  { this._onTap('L'); }
-  tapRight() { this._onTap('R'); }
-  /** Indica se attualmente almeno un pulsante UI è "tenuto premuto" (per held).
-   *  Aggiorna manualmente lo stato held da un'azione esterna. */
-  setButtonHeld(side, held) {
-    if (held) this._heldKeys.add(side);
-    else this._heldKeys.delete(side);
-    this._updateHeld();
-  }
-
   _onTap(side) {
     // Aggiorna held
     this._updateHeld();

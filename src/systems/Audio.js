@@ -39,46 +39,7 @@ export class Audio {
     osc.stop(ctx.currentTime + 0.07);
   }
 
-  /** Sparo della pistola del via: rumore bianco breve con bassi profondi.
-   *  Combina noise filtrato in highpass per il "crack" + un sub-tono basso. */
-  gunshot() {
-    if (this.muted) return;
-    const ctx = this._ensureCtx();
-    if (!ctx) return;
-    const now = ctx.currentTime;
-
-    // --- 1) Rumore bianco breve (il "crack" dello sparo) ---
-    const bufferSize = ctx.sampleRate * 0.20;
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = (Math.random() * 2 - 1);
-    }
-    const noise = ctx.createBufferSource();
-    noise.buffer = buffer;
-    const noiseFilter = ctx.createBiquadFilter();
-    noiseFilter.type = 'highpass';
-    noiseFilter.frequency.value = 800;
-    const noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(0.6, now);
-    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-    noise.connect(noiseFilter).connect(noiseGain).connect(ctx.destination);
-    noise.start(now);
-    noise.stop(now + 0.2);
-
-    // --- 2) Sub-tono basso (il "boom" / corpo dello sparo) ---
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(120, now);
-    osc.frequency.exponentialRampToValueAtTime(40, now + 0.10);
-    const oscGain = ctx.createGain();
-    oscGain.gain.setValueAtTime(0.5, now);
-    oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
-    osc.connect(oscGain).connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.16);
-  }
-
+  /** Beep di UI / conferma. */
   beep(freq = 600, dur = 0.08, type = 'square') {
     if (this.muted) return;
     const ctx = this._ensureCtx();

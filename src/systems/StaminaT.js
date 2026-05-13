@@ -16,10 +16,10 @@
 // PENALITÀ ESAURIMENTO: se stamina == 0, applica speedMultiplier() = 0.5 finché
 // non risale sopra 10 (effetto "muro del maratoneta"). Sopra 10, multiplier = 1.
 
-const BASE_DRAIN          = 1.6;    // era 1.2 — consumo lento ma più sensibile
-const FAST_THRESHOLD      = 0.50;   // era 0.55 — entra in "fast" prima
-const FAST_DRAIN_MAX      = 5.0;    // era 4.0 — sprint più impegnativo
-const SLOPE_UP_FACTOR     = 4.5;    // era 3.5 — la salita morde di più
+const BASE_DRAIN          = 1.2;
+const FAST_THRESHOLD      = 0.55;   // soglia "velocità alta" abbassata da 0.70
+const FAST_DRAIN_MAX      = 4.0;    // drain extra max raddoppiato da 2.0
+const SLOPE_UP_FACTOR     = 3.5;
 const SLOPE_DOWN_FACTOR   = 2.0;
 const LOW_TAP_THRESHOLD   = 0.5;
 const REST_RECOVERY_RATE  = 5.0;
