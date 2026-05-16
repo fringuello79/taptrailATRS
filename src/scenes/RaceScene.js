@@ -2,7 +2,7 @@
 // La scena principale: il giocatore corre lungo il GPX premendo tap.
 // Mette insieme: WorldRenderer, RunnerSprite, Stamina, Weather, HUD, Minimap, Altimetry.
 
-import { WorldRenderer, AmbientPalettes, drawCastle, drawAmphitheater, drawFinishArch, drawStartArch } from './WorldRenderer.js';
+import { WorldRenderer, AmbientPalettes, drawCastle, drawAmphitheater, drawFinishArch, drawStartArch, getEventIdForTrack } from './WorldRenderer.js';
 import { RunnerSprite, drawCrampFace } from '../entities/RunnerSprite.js';
 import { Stamina } from '../systems/Stamina.js';   // congelato, mantenuto come stub per scoring/compat
 import { StaminaT } from '../systems/StaminaT.js';
@@ -409,18 +409,22 @@ export class RaceScene {
     const H = this.game.virtualH;
 
     // 1. cielo
-    this.world.drawSky(ctx, this.weather);
+    this.world.drawSky(ctx, this.weather, this.track.id);
 
-    // 2. parallasse: dipende dalla viewLeft del runner
+    // 2. parallasse: dipende dalla viewLeft del runner.
+    // I landmark dell'Alba dei Marsi (chiesa, castello, anfiteatro) sono renderizzati
+    // automaticamente dentro drawParallaxLayers tra il layer 4 e il layer 5 di m1.
     const totalWorldPx = this.track.distanceKm * this.world.worldPxPerKm;
     const runnerScreenX = W * 0.32;
     const viewLeft = this.progress * totalWorldPx - runnerScreenX;
-    this.world.drawParallaxLayers(ctx, viewLeft, this.weather, this.palette);
+    this.world.drawParallaxLayers(ctx, viewLeft, this.weather, this.palette, this.track.id);
 
-    // 2b. CASTELLO al km 11 - disegnato PRIMA del sentiero (sullo sfondo, dietro al runner)
-    // L'anchor è +6 sotto il sentiero così la base del colle si "tuffa" nel terreno
-    // (verrà coperta dal sentiero) e il colle sembra emergere naturalmente.
-    if (this.track.id === 'alba-dei-marsi-21k') {
+    // 2b. CASTELLO al km 11 - SOLO se l'evento NON è alba (fallback geometrico per altre gare).
+    // Quando l'evento è alba, i 3 landmark pixel-art sono già stati renderizzati dentro
+    // drawParallaxLayers ai km specifici del percorso.
+    const _eventIdForRender = getEventIdForTrack(this.track.id);
+    const _hasAlbaLandmarks = _eventIdForRender === 'alba-dei-marsi';
+    if (this.track.id === 'alba-dei-marsi-21k' && !_hasAlbaLandmarks) {
       const castleProgress = 11 / 21;
       const cwx = castleProgress * totalWorldPx;
       const csx = cwx - viewLeft;
@@ -428,8 +432,6 @@ export class RaceScene {
         const cyT = this.world.trailYAt(this.track, castleProgress);
         drawCastle(ctx, Math.floor(csx), Math.floor(cyT) + 6);
       }
-
-    // 2c. ANFITEATRO al km 16 - SPOSTATO DOPO IL SENTIERO (ora è in sezione 4c).
     }
 
     // 3. sentiero in primo piano + restituisce posizione runner
@@ -457,6 +459,8 @@ export class RaceScene {
           }
         }
 
+        // Rendering inline del ristoro: palo + bandiera Croce Rossa + tavolo con
+        // arrosticini (Voltigno) o bottiglie d'acqua (altrove). Stesso stile per tutti gli eventi.
         // palo bandiera (più grosso)
         ctx.fillStyle = '#000';
         ctx.fillRect(sx - 1, yT - 28, 2, 28);
@@ -514,8 +518,29 @@ export class RaceScene {
       drawFinishArch(ctx, Math.floor(fsx), Math.floor(fyT), this.timer);
     }
 
-    // 4c. LANDMARK speciali del percorso L'Alba dei Marsi (anfiteatro)
-    if (this.track.id === 'alba-dei-marsi-21k') {
+    // 4b-bis. OMINO BdB ("Matteo") parecchio DOPO l'arco arrivo (solo Alba dei Marsi).
+    // Uso un offset FISSO in pixel a destra del finish arch invece di progress,
+    // così la distanza è leggibile a schermo indipendentemente dalla lunghezza della gara.
+    const bdbSprite = this.world.getEventBdBFinishSprite(this.track.id);
+    if (bdbSprite) {
+      // finishProgress = 0.995 (già definito sopra), fsx = posizione X arco arrivo a schermo
+      const BDB_OFFSET_PX_FROM_ARCH = 70; // px a destra dell'arco arrivo
+      const bdbSx = fsx + BDB_OFFSET_PX_FROM_ARCH;
+      if (bdbSx > -50 && bdbSx < W + bdbSprite.width + 50) {
+        // Trail Y al "punto" dove sta Matteo: leggo il trail a un progress un po' avanti
+        // dell'arco arrivo. Conversione offset px -> progress per leggere la quota terreno.
+        const bdbProgress = Math.min(0.9999, finishProgress + BDB_OFFSET_PX_FROM_ARCH / totalWorldPx);
+        const bdbYT = this.world.trailYAt(this.track, bdbProgress);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(bdbSprite,
+          Math.floor(bdbSx),
+          Math.floor(bdbYT - bdbSprite.height + 5));
+      }
+    }
+
+    // 4c. LANDMARK speciali del percorso L'Alba dei Marsi (anfiteatro geometrico).
+    // Skip se l'evento è alba — l'anfiteatro pixel-art è già renderizzato in drawAlbaLandmarksOnSlope.
+    if (this.track.id === 'alba-dei-marsi-21k' && !_hasAlbaLandmarks) {
       const amphProgress = 16 / 21;
       const awx = amphProgress * totalWorldPx;
       const asx = awx - viewLeft;

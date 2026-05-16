@@ -547,6 +547,115 @@ function _getBgLayer(n) { return _bgLayers[n] || null; }
 // Avvio caricamento eager dei 5 layer
 for (let i = 1; i <= 5; i++) _loadBgLayer(i);
 
+// === EVENT-SPECIFIC ASSET LOADER ===
+// Per eventi con asset set dedicato (Alba dei Marsi, etc.) carichiamo PNG
+// custom in sostituzione del set m1 di default.
+const _eventAssets = {};
+function _loadEventAsset(eventId, key, path) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      if (!_eventAssets[eventId]) _eventAssets[eventId] = {};
+      _eventAssets[eventId][key] = img;
+      resolve(img);
+    };
+    img.onerror = () => {
+      console.warn(`Event asset load failed: ${eventId}/${key} (${path})`);
+      resolve(null);
+    };
+    img.src = path;
+  });
+}
+// Configurazione asset per evento. Aggiungere qui nuovi eventi (Voltigno, Mammut, ...).
+// Per Alba dei Marsi usiamo:
+//  - sky custom (no-tile, sostituisce il cielo m1)
+//  - 3 sprite landmark pixel-art (chiesa, castello, anfiteatro) renderizzati
+//    sul versante del layer 4 m1 ai km specifici del percorso
+//  - Matteo (BdB) sprite per il post-traguardo
+// Mountains e foreground restano m1 (set CraftPix) per coerenza stilistica.
+const _EVENT_ASSET_CONFIG = {
+  'alba-dei-marsi': {
+    sky:        'assets/backgrounds/alba_dei_marsi/sky.png',
+    chiesa:     'assets/sprites/landmarks/alba_chiesa.png',
+    castello:   'assets/sprites/landmarks/alba_castello.png',
+    anfiteatro: 'assets/sprites/landmarks/alba_anfiteatro.png',
+    bdbFinish:  'assets/sprites/finish/bdb_alba.png',
+  },
+};
+
+// Configurazione km dei landmark per ogni distanza dell'Alba dei Marsi.
+// Posizioni reali del percorso (chilometro -> coordinate sul tracciato).
+const _ALBA_LANDMARK_KM = {
+  'alba-dei-marsi-12k': { castello: 7,  chiesa: 8,  anfiteatro: 9  },
+  'alba-dei-marsi-21k': { castello: 12, chiesa: 14, anfiteatro: 15 },
+};
+// Caricamento eager di tutti gli asset evento al boot del modulo
+for (const [eventId, assets] of Object.entries(_EVENT_ASSET_CONFIG)) {
+  for (const [key, path] of Object.entries(assets)) {
+    _loadEventAsset(eventId, key, path);
+  }
+}
+/** Mapping trackId → eventId. */
+export function getEventIdForTrack(trackId) {
+  if (!trackId) return null;
+  if (trackId.startsWith('alba-dei-marsi')) return 'alba-dei-marsi';
+  return null;
+}
+function _getEventAsset(eventId, key) {
+  if (!eventId) return null;
+  return (_eventAssets[eventId] && _eventAssets[eventId][key]) || null;
+}
+/** L'evento ha un cielo custom da usare al posto dei layer 1+2 di m1? */
+function _eventHasSkyOverride(eventId) {
+  return !!_getEventAsset(eventId, 'sky');
+}
+
+/** Cache del profilo top/bottom del layer 4 m1 (per posizionare i landmark sul versante).
+ * Calcolato una sola volta dal PNG del layer 4 quando l'immagine è disponibile. */
+let _layer4Profile = null; // { topY: Int16Array(W), bottomY: Int16Array(W), W, H }
+function _computeLayer4Profile() {
+  if (_layer4Profile) return _layer4Profile;
+  const layer4 = _getBgLayer(4);
+  if (!layer4 || !layer4.complete || layer4.naturalWidth === 0) return null;
+  // Estrai i pixel alpha via canvas
+  const W = layer4.naturalWidth;
+  const H = layer4.naturalHeight;
+  const off = document.createElement('canvas');
+  off.width = W;
+  off.height = H;
+  const offCtx = off.getContext('2d', { willReadFrequently: true });
+  offCtx.imageSmoothingEnabled = false;
+  offCtx.drawImage(layer4, 0, 0);
+  let data;
+  try {
+    data = offCtx.getImageData(0, 0, W, H).data;
+  } catch (e) {
+    // CORS o altri errori
+    return null;
+  }
+  const topY = new Int16Array(W).fill(H);
+  const botY = new Int16Array(W).fill(-1);
+  for (let x = 0; x < W; x++) {
+    for (let y = 0; y < H; y++) {
+      const a = data[(y * W + x) * 4 + 3];
+      if (a > 0) {
+        if (topY[x] === H) topY[x] = y;
+        botY[x] = y;
+      }
+    }
+  }
+  _layer4Profile = { topY, botY, W, H };
+  return _layer4Profile;
+}
+
+/** Disegna un'immagine UNA volta (no-tile), scalata a (w,h). Per layer non-tilabili
+ * tipo cielo con sole o montagne con picchi specifici (evita seam visibili). */
+function _drawSingleScaled(ctx, img, x, y, w, h) {
+  if (!img) return;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(img, 0, 0, img.width, img.height, Math.floor(x), Math.floor(y), w, h);
+}
+
 /** Disegna un'immagine ripetuta orizzontalmente per riempire la viewport.
  * offsetX può essere negativo (scroll). L'immagine viene scalata verticalmente
  * per riempire vh dello schermo se più piccola. */
@@ -591,7 +700,19 @@ export class WorldRenderer {
     return progress * track.distanceKm * this.worldPxPerKm;
   }
 
-  drawSky(ctx, weather) {
+  drawSky(ctx, weather, trackId = null) {
+    // Se l'evento ha un sky asset dedicato, lo uso (NO TILE - il sole non si ripete)
+    const eventId = getEventIdForTrack(trackId);
+    if (eventId) {
+      const eventSky = _getEventAsset(eventId, 'sky');
+      if (eventSky) {
+        // Sky fullbleed statico - no parallax, no tile. Il sole resta dov'è.
+        _drawSingleScaled(ctx, eventSky, 0, 0, this.W, this.H);
+        return;
+      }
+    }
+
+    // Fallback al sistema m1
     // Lo sfondo m1 di CraftPix include sky + nuvole nei layer 1 e 2.
     // Layer 1 = cielo (gradiente già dipinto), Layer 2 = nuvole rosee.
     // Li disegno qui come "cielo".
@@ -652,13 +773,20 @@ export class WorldRenderer {
     }
   }
 
-  drawParallaxLayers(ctx, viewLeft, weather, palette) {
-    // I 5 layer di m1 sono:
-    // 1 = cielo (già in drawSky)
-    // 2 = nuvole (già in drawSky)
+  drawParallaxLayers(ctx, viewLeft, weather, palette, trackId = null) {
+    // I 5 layer di m1 (CraftPix) sono il backbone visivo di ogni gara:
+    // 1 = cielo, 2 = nuvole (entrambi gestiti in drawSky)
     // 3 = montagna principale (parallax molto lento)
-    // 4 = colline medie blu/viola (parallax medio)
-    // 5 = foreground colline verdi (parallax veloce, va dietro al sentiero)
+    // 4 = colline medie blu/viola (parallax medio) - SU CUI APPOGGIANO I LANDMARK ALBA
+    // 5 = foreground colline verdi (parallax veloce, davanti ai landmark)
+    //
+    // Per gli eventi con set custom (es. Alba dei Marsi) il SOLO cielo viene
+    // sostituito (gestito in drawSky); i parallax mid/foreground restano m1
+    // per coerenza stilistica con il resto del gioco.
+    //
+    // I landmark architettonici dell'Alba dei Marsi (chiesa, castello, anfiteatro)
+    // vengono renderizzati separatamente in drawAlbaLandmarksOnSlope(), da chiamare
+    // TRA il layer 4 e il layer 5, così l'erba verde del primo piano li copre.
     const layer3 = _getBgLayer(3);
     const layer4 = _getBgLayer(4);
     const layer5 = _getBgLayer(5);
@@ -671,10 +799,104 @@ export class WorldRenderer {
       const px4 = -(viewLeft * 0.30) % layer4.width;
       _drawTiledLayer(ctx, layer4, px4, 0, this.W, this.H, 1);
     }
+
+    // === LANDMARK ALBA (tra layer 4 e layer 5) ===
+    // Renderizzati QUI così sono SOPRA il layer 4 (colline blu di sfondo)
+    // ma SOTTO il layer 5 (erba verde del primo piano).
+    this.drawAlbaLandmarksOnSlope(ctx, viewLeft, trackId);
+
     if (layer5) {
       const px5 = -(viewLeft * 0.55) % layer5.width;
       _drawTiledLayer(ctx, layer5, px5, 0, this.W, this.H, 1);
     }
+  }
+
+  /** Renderizza i 3 landmark dell'Alba dei Marsi (chiesa, castello, anfiteatro)
+   * sul versante della collina blu del layer 4, ai km specifici del percorso.
+   *
+   * Coordinate verticali: posiziono ogni sprite con la BASE al ~40% tra la cima
+   * e il fondo della silhouette del layer 4 (mid-slope), così sembrano poggiati
+   * sul fianco della collina e non sulla cresta.
+   * Parallax: stesso del layer 4 (0.30) per coerenza di profondità.
+   */
+  drawAlbaLandmarksOnSlope(ctx, viewLeft, trackId) {
+    if (!trackId) return;
+    const eventId = getEventIdForTrack(trackId);
+    if (eventId !== 'alba-dei-marsi') return;
+    const kmConfig = _ALBA_LANDMARK_KM[trackId];
+    if (!kmConfig) return;
+
+    const profile = _computeLayer4Profile();
+    if (!profile) return; // layer 4 non ancora caricato
+
+    const layer4 = _getBgLayer(4);
+    if (!layer4) return;
+    const L4_W = layer4.width;
+
+    const sprites = [
+      { key: 'castello',   km: kmConfig.castello,   img: _getEventAsset(eventId, 'castello') },
+      { key: 'chiesa',     km: kmConfig.chiesa,     img: _getEventAsset(eventId, 'chiesa') },
+      { key: 'anfiteatro', km: kmConfig.anfiteatro, img: _getEventAsset(eventId, 'anfiteatro') },
+    ];
+
+    const PARALLAX = 0.30; // stesso del layer 4
+    const SLOPE_FACTOR = 0.40; // 0.0=cima, 1.0=fondo, 0.4=mid-slope
+
+    for (const { img, km } of sprites) {
+      if (!img) continue;
+      // Posizione X nel mondo del landmark
+      const landmarkWorldX = km * this.worldPxPerKm;
+      // Schermo X: stessa formula del layer 4 (tile + parallax 0.30)
+      const screenX = Math.floor(landmarkWorldX - viewLeft * PARALLAX);
+
+      const sw = img.width;
+      const sh = img.height;
+
+      // Culling: skip se completamente fuori viewport
+      if (screenX + sw < 0 || screenX > this.W) continue;
+
+      // Calcolo Y: trovo il versante del layer 4 nella zona X dello sprite.
+      // Il layer 4 è tilato in orizzontale; uso x % L4_W per trovare la riga giusta.
+      // Considero il range orizzontale [screenX, screenX + sw].
+      // - L'asse Y delle colline scala con this.H / profile.H.
+      const yScale = this.H / profile.H;
+      let topYSum = 0;
+      let botYSum = 0;
+      let topCount = 0;
+      let botCount = 0;
+      // Campiono ogni 2 px per velocità
+      for (let dx = 0; dx < sw; dx += 2) {
+        // Coordinate "viewport" → "world layer4"
+        // viewLeft * PARALLAX è già stato sottratto in screenX; per riottenere
+        // la colonna nel PNG del layer 4 devo fare il modulo L4_W della world position.
+        const worldXAtCol = landmarkWorldX * 1; // costante per tutto lo sprite
+        // In realtà ogni colonna dx dello sprite corrisponde a viewport x = screenX+dx.
+        // La colonna del PNG layer 4 a quella viewport x:
+        //   pngCol = (viewportX + viewLeft*PARALLAX) mod L4_W
+        const viewportX = screenX + dx;
+        let pngCol = Math.floor((viewportX + viewLeft * PARALLAX) % L4_W);
+        if (pngCol < 0) pngCol += L4_W;
+        const t = profile.topY[pngCol];
+        const b = profile.botY[pngCol];
+        if (t < profile.H) { topYSum += t; topCount++; }
+        if (b >= 0) { botYSum += b; botCount++; }
+      }
+      if (topCount === 0) continue;
+      const avgTop = (topYSum / topCount) * yScale;
+      const avgBot = (botCount > 0 ? botYSum / botCount : profile.H) * yScale;
+      const baseY = Math.floor(avgTop + SLOPE_FACTOR * (avgBot - avgTop));
+      const drawY = baseY - sh;
+
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(img, screenX, drawY);
+    }
+  }
+
+  /** Sprite BdB ("Matteo") per il post-finish (se evento è alba), altrimenti null. */
+  getEventBdBFinishSprite(trackId) {
+    const eventId = getEventIdForTrack(trackId);
+    if (!eventId) return null;
+    return _getEventAsset(eventId, 'bdbFinish');
   }
 
   _horizonHazeRgb(palette) {
